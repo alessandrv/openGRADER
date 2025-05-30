@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Simplified drag and drop styles */
+
+/* Draggable item */
+[draggable="true"] {
+  cursor: grab;
+  user-select: none;
+}
+
+[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* The item being dragged */
+.opacity-50 {
+  opacity: 0.6 !important;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+  transform: scale(1.02);
+}
+
+/* Items not being dragged during a drag operation */
+.dragging-active .opacity-60 {
+  opacity: 0.6 !important;
+}
+
+/* Valid drop targets during drag */
+.dragging-active [data-droppable="true"] {
+  outline: 2px dashed #ccc;
+  background-color: rgba(200, 200, 200, 0.25);
+  position: relative;
+  cursor: copy !important;
+}
+
+/* The active drop target - highlighted */
+.bg-highlight-200 {
+  outline: 3px dashed #9b59b6 !important;
+  background-color: rgba(155, 89, 182, 0.2) !important;
+  box-shadow: 0 0 15px rgba(155, 89, 182, 0.7);
+  transform: scale(1.01);
+  z-index: 100;
+  cursor: copy !important;
+}
+
+/* Add a "Drop here" label to the active drop target */
+.bg-highlight-200::after {
+  content: "Drop here";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: rgba(155, 89, 182, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 1000;
+}
+
+/* Force cursors during drag operation */
+.dragging-active * {
+  cursor: no-drop;
+}
+
+.dragging-active [draggable="true"] {
+  cursor: grabbing !important;
+}
+
+.dragging-active [data-droppable="true"] {
+  cursor: copy !important;
+}
+
+/* Perfect circle for category colors */
+.category-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Color definitions for categories */
+.category-color-primary { background-color: #0070f3; }
+.category-color-secondary { background-color: #7928ca; }
+.category-color-warning { background-color: #f5a623; }
+.category-color-danger { background-color: #ff0000; }
+.category-color-default { background-color: #888888; }
+.category-color-purple { background-color: #9b59b6; }
+.category-color-pink { background-color: #e91e63; }
+.category-color-red { background-color: #f44336; }
+.category-color-orange { background-color: #ff9800; }
+.category-color-yellow { background-color: #ffeb3b; }
+.category-color-green { background-color: #4caf50; }
+.category-color-teal { background-color: #009688; }
+.category-color-blue { background-color: #2196f3; }
+.category-color-indigo { background-color: #3f51b5; }
+.category-color-violet { background-color: #9c27b0; }
+.category-color-cyan { background-color: #00bcd4; }
+
+/* Background color classes for all category colors */
+/* Base -50 shades (lighter background) */
+
+
+/* Hover -100 shades (slightly darker for hover effect) */
+.hover\:bg-primary-100:hover { background-color: rgba(0, 112, 243, 0.25); }
+.hover\:bg-secondary-100:hover { background-color: rgba(121, 40, 202, 0.25); }
+.hover\:bg-warning-100:hover { background-color: rgba(245, 166, 35, 0.25); }
+.hover\:bg-danger-100:hover { background-color: rgba(255, 0, 0, 0.25); }
+.hover\:bg-default-100:hover { background-color: rgba(136, 136, 136, 0.25); }
+.hover\:bg-purple-100:hover { background-color: rgba(155, 89, 182, 0.25); }
+.hover\:bg-pink-100:hover { background-color: rgba(233, 30, 99, 0.25); }
+.hover\:bg-red-100:hover { background-color: rgba(244, 67, 54, 0.25); }
+.hover\:bg-orange-100:hover { background-color: rgba(255, 152, 0, 0.25); }
+.hover\:bg-yellow-100:hover { background-color: rgba(255, 235, 59, 0.25); }
+.hover\:bg-green-100:hover { background-color: rgba(76, 175, 80, 0.25); }
+.hover\:bg-teal-100:hover { background-color: rgba(0, 150, 136, 0.25); }
+.hover\:bg-blue-100:hover { background-color: rgba(33, 150, 243, 0.25); }
+.hover\:bg-indigo-100:hover { background-color: rgba(63, 81, 181, 0.25); }
+.hover\:bg-violet-100:hover { background-color: rgba(156, 39, 176, 0.25); }
+.hover\:bg-cyan-100:hover { background-color: rgba(0, 188, 212, 0.25); }
+
+/* Non-hover -100 versions (needed for some components) */
+.bg-primary-100 { background-color: rgba(0, 112, 243, 0.25); }
+.bg-secondary-100 { background-color: rgba(121, 40, 202, 0.25); }
+.bg-warning-100 { background-color: rgba(245, 166, 35, 0.25); }
+.bg-danger-100 { background-color: rgba(255, 0, 0, 0.25); }
+.bg-default-100 { background-color: rgba(136, 136, 136, 0.25); }
+.bg-purple-100 { background-color: rgba(155, 89, 182, 0.25); }
+.bg-pink-100 { background-color: rgba(233, 30, 99, 0.25); }
+.bg-red-100 { background-color: rgba(244, 67, 54, 0.25); }
+.bg-orange-100 { background-color: rgba(255, 152, 0, 0.25); }
+.bg-yellow-100 { background-color: rgba(255, 235, 59, 0.25); }
+.bg-green-100 { background-color: rgba(76, 175, 80, 0.25); }
+.bg-teal-100 { background-color: rgba(0, 150, 136, 0.25); }
+.bg-blue-100 { background-color: rgba(33, 150, 243, 0.25); }
+.bg-indigo-100 { background-color: rgba(63, 81, 181, 0.25); }
+.bg-violet-100 { background-color: rgba(156, 39, 176, 0.25); }
+.bg-cyan-100 { background-color: rgba(0, 188, 212, 0.25); }
+
+.text-default { color: #a0a0a0; }
+/* Background color classes for all category colors */
+/* Base -50 shades (lighter background) */

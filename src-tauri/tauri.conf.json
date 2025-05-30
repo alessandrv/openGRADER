@@ -1,0 +1,68 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "openGRADER",
+  "version": "0.1.0",
+  "identifier": "com.opengrader.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "openGRADER",
+        "width": 1024,
+        "height": 768,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": [
+        {
+          "identifier": "core-api",
+          "description": "Allow access to core APIs",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "core:app:default",
+            "core:event:default",
+            "core:image:default",
+            "core:menu:default",
+            "core:path:default",
+            "core:resources:default",
+            "core:tray:default",
+            "core:webview:default",
+            "core:window:default",
+            "global-shortcut:default",
+            "log:default"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "global-shortcut": {
+      "permission": "allow"
+    },
+    "shell": {
+      "permission": "allow"
+    }
+  }
+}

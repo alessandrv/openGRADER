@@ -23,9 +23,9 @@ struct BeforeActionState {
     cooldown: std::time::Duration,
 }
 
-// Shared state for the application
+// Shared state for the application - removed Enigo from here
 pub struct AppState {
-    enigo: Mutex<Enigo>,
+    // Removed enigo from here since it's not thread-safe
     midi_connection: Mutex<Option<MidiInputConnection<()>>>,
     midi_ports: Mutex<Vec<(String, usize)>>, // Store (port_name, index) pairs
     registered_macros: Mutex<Vec<MacroConfig>>, // Added to store macros
@@ -37,7 +37,7 @@ pub struct AppState {
 
 static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
     Arc::new(AppState {
-        enigo: Mutex::new(Enigo::new()),
+        // Removed enigo initialization
         midi_connection: Mutex::new(None),
         midi_ports: Mutex::new(Vec::new()),
         registered_macros: Mutex::new(Vec::new()),
@@ -45,6 +45,11 @@ static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
         before_action_states: Mutex::new(HashMap::new()),
     })
 });
+
+// Helper function to create Enigo instances on-demand
+fn create_enigo() -> Enigo {
+    Enigo::new()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroConfig {
@@ -165,7 +170,7 @@ fn string_to_mouse_button(button: &str) -> Option<MouseButton> {
 // Command to move the mouse
 #[tauri::command]
 fn move_mouse(x: i32, y: i32, relative: bool) -> Result<(), String> {
-    let mut enigo = APP_STATE.enigo.lock().unwrap();
+    let mut enigo = create_enigo();
     
     if relative {
         enigo.mouse_move_relative(x, y);
@@ -179,7 +184,7 @@ fn move_mouse(x: i32, y: i32, relative: bool) -> Result<(), String> {
 // Command to click the mouse
 #[tauri::command]
 fn click_mouse(button: String) -> Result<(), String> {
-    let mut enigo = APP_STATE.enigo.lock().unwrap();
+    let mut enigo = create_enigo();
     
     let button = string_to_mouse_button(&button)
         .ok_or_else(|| format!("Invalid mouse button: {}", button))?;
@@ -192,7 +197,7 @@ fn click_mouse(button: String) -> Result<(), String> {
 // Command to press a key
 #[tauri::command]
 fn press_key(key: String) -> Result<(), String> {
-    let mut enigo = APP_STATE.enigo.lock().unwrap();
+    let mut enigo = create_enigo();
     
     let key = string_to_key(&key)
         .ok_or_else(|| format!("Invalid key: {}", key))?;
@@ -205,7 +210,7 @@ fn press_key(key: String) -> Result<(), String> {
 // Command to press a key combination
 #[tauri::command]
 fn press_key_combination(keys: Vec<String>) -> Result<(), String> {
-    let mut enigo = APP_STATE.enigo.lock().unwrap();
+    let mut enigo = create_enigo();
     
     let mut enigo_keys = Vec::new();
     for key in keys {
@@ -294,17 +299,23 @@ fn cancel_macro(id: String) -> Result<(), String> {
 // Command to execute an action based on a macro
 #[tauri::command]
 fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), String> {
-    // For all other action types, acquire the lock and process normally
-    let mut enigo_guard = APP_STATE.enigo.lock().map_err(|e| e.to_string())?;
+    execute_action_impl(action_type, params)
+}
+
+// Internal implementation that can be called from different contexts
+fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<(), String> {
+    // Create a new Enigo instance for each action execution
+    let mut enigo = create_enigo();
+    
     match action_type {
         ActionType::MouseMove => {
             let x = params.x.ok_or("Missing x parameter for MouseMove")?;
             let y = params.y.ok_or("Missing y parameter for MouseMove")?;
             let relative = params.relative.unwrap_or(false);
             if relative {
-                enigo_guard.mouse_move_relative(x, y);
+                enigo.mouse_move_relative(x, y);
             } else {
-                enigo_guard.mouse_move_to(x, y);
+                enigo.mouse_move_to(x, y);
             }
             Ok(())
         },
@@ -313,9 +324,9 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
             let button = string_to_mouse_button(&button_str)
                 .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
             if params.hold == Some(true) {
-                enigo_guard.mouse_down(button);
+                enigo.mouse_down(button);
             } else {
-                enigo_guard.mouse_click(button);
+                enigo.mouse_click(button);
             }
             Ok(())
         },
@@ -323,7 +334,7 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
             let key_str = params.key.ok_or("Missing key parameter for KeyPress")?;
             let key = string_to_key(&key_str)
                 .ok_or_else(|| format!("Invalid key: {}", key_str))?;
-            enigo_guard.key_click(key);
+            enigo.key_click(key);
             Ok(())
         },
         ActionType::KeyCombination => {
@@ -335,10 +346,10 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
                 enigo_keys.push(enigo_key);
             }
             for key in &enigo_keys {
-                enigo_guard.key_down(*key);
+                enigo.key_down(*key);
             }
             for key in enigo_keys.iter().rev() {
-                enigo_guard.key_up(*key);
+                enigo.key_up(*key);
             }
             Ok(())
         },
@@ -346,7 +357,7 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
             let button_str = params.button.ok_or("Missing button parameter for MouseRelease")?;
             let button = string_to_mouse_button(&button_str)
                 .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
-            enigo_guard.mouse_up(button);
+            enigo.mouse_up(button);
             Ok(())
         },
         ActionType::MouseDrag => {
@@ -357,7 +368,7 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
             let dy = params.y.ok_or("Missing dy (y) parameter for MouseDrag")?;
             let duration_ms = params.duration.unwrap_or(0);
 
-            enigo_guard.mouse_down(button);
+            enigo.mouse_down(button);
             
             // For MouseDrag, we still want the duration for smooth dragging
             if duration_ms > 0 {
@@ -367,7 +378,7 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
                 let sleep_duration = std::time::Duration::from_millis((duration_ms as u64) / (steps as u64));
                 
                 for i in 0..steps {
-                    enigo_guard.mouse_move_relative(step_dx.round() as i32, step_dy.round() as i32);
+                    enigo.mouse_move_relative(step_dx.round() as i32, step_dy.round() as i32);
                     if i < steps - 1 { 
                          if sleep_duration > std::time::Duration::from_millis(1) {
                             std::thread::sleep(sleep_duration);
@@ -376,10 +387,10 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
                 }
             } else {
                 // Instantaneous move if duration is 0
-                enigo_guard.mouse_move_relative(dx, dy);
+                enigo.mouse_move_relative(dx, dy);
             }
             
-            enigo_guard.mouse_up(button);
+            enigo.mouse_up(button);
             Ok(())
         },
         ActionType::Delay => {
@@ -392,6 +403,34 @@ fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), S
             Err("Delay action type should be handled by the calling async loop".to_string())
         },
     }
+}
+
+// Helper function to execute actions safely on macOS (on main thread)
+#[cfg(target_os = "macos")]
+async fn execute_action_safe<R: Runtime>(action_type: ActionType, params: ActionParams, app_handle: Option<tauri::AppHandle<R>>) -> Result<(), String> {
+    if let Some(app) = app_handle {
+        let action_type_clone = action_type.clone();
+        let params_clone = params.clone();
+        
+        // Use a channel to get the result back from the main thread
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        app.run_on_main_thread(move || {
+            let result = execute_action_impl(action_type_clone, params_clone);
+            let _ = tx.send(result);
+        }).map_err(|e| format!("Failed to run on main thread: {}", e))?;
+        
+        rx.await.map_err(|e| format!("Failed to receive result: {}", e))?
+    } else {
+        // Fallback to direct execution if no app handle available
+        execute_action_impl(action_type, params)
+    }
+}
+
+// For non-macOS platforms, just call the implementation directly
+#[cfg(not(target_os = "macos"))]
+async fn execute_action_safe<R: Runtime>(action_type: ActionType, params: ActionParams, _app_handle: Option<tauri::AppHandle<R>>) -> Result<(), String> {
+    execute_action_impl(action_type, params)
 }
 
 // Command to list MIDI inputs
@@ -550,7 +589,7 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                             let mut macros_to_execute = Vec::new();
                             let mut keys_to_remove = Vec::new();
                             
-                            for (key, active_macro) in active_macros.iter() {
+                            for (key, _active_macro) in active_macros.iter() {
                                 // Skip if this is the same macro/group we're currently triggering
                                 if key == &active_macro_key {
                                     println!("Found current macro/group in active_macros, will be replaced: {}", key);
@@ -592,7 +631,7 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                 
                                 for (i, action) in after_actions.iter().enumerate() {
                                     println!("Executing forced after action {} of type {:?}", i, action.action_type);
-                                    match execute_action(action.action_type.clone(), action.action_params.clone()) {
+                                    match execute_action_safe(action.action_type.clone(), action.action_params.clone(), Some(app_handle_clone.clone())).await {
                                         Ok(_) => {
                                             println!("Forced after action {} executed successfully", i);
                                         },
@@ -700,7 +739,7 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                         eprintln!("Delay action missing duration at before_action {}", i);
                                     }
                                 } else {
-                                    match execute_action(action_def.action_type.clone(), action_def.action_params.clone()) {
+                                    match execute_action_safe(action_def.action_type.clone(), action_def.action_params.clone(), Some(app_handle_clone.clone())).await {
                                     Ok(_) => {
                                         println!("Before action {} executed successfully", i);
                                     },
@@ -737,7 +776,7 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                     eprintln!("Delay action missing duration in main_actions at index {} for macro {}", i, macro_name_clone);
                                 }
                             } else { // For other actions, call execute_action
-                                match execute_action(action_def.action_type.clone(), action_def.action_params.clone()) {
+                                match execute_action_safe(action_def.action_type.clone(), action_def.action_params.clone(), Some(app_handle_clone.clone())).await {
                                     Ok(_) => println!("Main action {} executed successfully for macro: {}", i, macro_name_clone),
                                     Err(e) => eprintln!("Error executing main action {} for macro {}: {}", i, macro_name_clone, e),
                                 }
@@ -776,7 +815,7 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                     for (i, action) in after_actions.iter().enumerate() {
                                         println!("Executing after action {} of type {:?}", i, action.action_type);
                                         
-                                        match execute_action(action.action_type.clone(), action.action_params.clone()) {
+                                        match execute_action_safe(action.action_type.clone(), action.action_params.clone(), Some(_app_handle_after.clone())).await {
                                             Ok(_) => {
                                                 println!("After action {} executed successfully", i);
                                             },
@@ -912,7 +951,7 @@ pub struct RustMidiEvent {
 // Command to get cursor position
 #[tauri::command]
 fn get_cursor_position() -> Result<(i32, i32), String> {
-    let enigo = APP_STATE.enigo.lock().unwrap();
+    let enigo = create_enigo();
     
     // Get the mouse position and explicitly create a tuple in (x, y) order
     // This ensures the coordinates are in the expected order

@@ -332,16 +332,6 @@ async fn execute_action_safe<R: Runtime>(action_type: ActionType, params: Action
         // Use a channel to get the result back from the main thread
         let (tx, rx) = tokio::sync::oneshot::channel();
         
-        // Check for accessibility permissions
-        println!("Checking accessibility permissions...");
-        let trusted = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
-        println!("Accessibility permissions status: {}", trusted);
-        
-        if !trusted {
-            println!("Accessibility permissions not granted!");
-            return Err("Accessibility permissions are required for UI automation. Please grant permissions in System Settings > Privacy & Security > Accessibility".to_string());
-        }
-        
         println!("Running action on main thread...");
         app.run_on_main_thread(move || {
             println!("Inside main thread, executing action...");

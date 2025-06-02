@@ -29,4 +29,3 @@ tokio = { version = "1", features = ["full"] }
 wmidi = "4.0.10"
 once_cell = "1.19.0"
 midir = "0.9.1"
-macos-accessibility-client = "0.0.1"

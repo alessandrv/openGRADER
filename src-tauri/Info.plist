@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.opengrader.app</string>
+    <key>CFBundleName</key>
+    <string>openGRADER</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>openGRADER needs to control your computer using accessibility features to automate actions.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>openGRADER needs accessibility permissions to automate mouse and keyboard actions.</string>
+</dict>
+</plist> 

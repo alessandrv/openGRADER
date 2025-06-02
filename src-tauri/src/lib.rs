@@ -48,7 +48,12 @@ static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
 
 // Helper function to create Enigo instances on-demand
 fn create_enigo() -> Enigo {
-    Enigo::new()
+    println!("Creating new Enigo instance...");
+    // Add a small delay to ensure proper initialization
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let enigo = Enigo::new();
+    println!("Enigo instance created successfully");
+    enigo
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +116,22 @@ pub struct ActionParams {
     pub duration: Option<u32>,
 }
 
+impl Default for ActionParams {
+    fn default() -> Self {
+        Self {
+            x: None,
+            y: None,
+            button: None,
+            key: None,
+            modifiers: None,
+            keys: None,
+            relative: None,
+            hold: None,
+            duration: None,
+        }
+    }
+}
+
 // Convert string key name to Enigo Key
 fn string_to_key(key: &str) -> Option<Key> {
     match key.to_lowercase().as_str() {
@@ -154,21 +175,12 @@ fn string_to_key(key: &str) -> Option<Key> {
         "f18" => Some(Key::F18),
         "f19" => Some(Key::F19),
         "f20" => Some(Key::F20),
-        "f21" => Some(Key::F21),
-        "f22" => Some(Key::F22),
-        "f23" => Some(Key::F23),
-        "f24" => Some(Key::F24),
-   
-
         // Alternative arrow key names
         "arrowleft" => Some(Key::Layout('←')),
         "arrowright" => Some(Key::Layout('→')),
         "arrowup" => Some(Key::Layout('↑')),
         "arrowdown" => Some(Key::Layout('↓')),
         // Additional system keys
-        "insert" => Some(Key::Insert),
-        "pause" => Some(Key::Pause),
-        "numlock" => Some(Key::Numlock),
         s if s.len() == 1 => {
             let c = s.chars().next()?;
             if c.is_ascii() {
@@ -191,69 +203,167 @@ fn string_to_mouse_button(button: &str) -> Option<MouseButton> {
     }
 }
 
-// Command to move the mouse
+// Command to execute an action based on a macro
 #[tauri::command]
-fn move_mouse(x: i32, y: i32, relative: bool) -> Result<(), String> {
+async fn execute_action<R: Runtime>(app_handle: AppHandle<R>, action_type: ActionType, params: ActionParams) -> Result<(), String> {
+    execute_action_safe(action_type, params, Some(app_handle)).await
+}
+
+// Internal implementation that can be called from different contexts
+fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<(), String> {
+    // Create a new Enigo instance for each action execution
+    println!("Creating new Enigo instance for action: {:?}", action_type);
     let mut enigo = create_enigo();
     
-    if relative {
-        enigo.mouse_move_relative(x, y);
+    match action_type {
+        ActionType::MouseMove => {
+            let x = params.x.ok_or("Missing x parameter for MouseMove")?;
+            let y = params.y.ok_or("Missing y parameter for MouseMove")?;
+            let relative = params.relative.unwrap_or(false);
+            println!("Executing MouseMove: x={}, y={}, relative={}", x, y, relative);
+            if relative {
+                enigo.mouse_move_relative(x, y);
+            } else {
+                enigo.mouse_move_to(x, y);
+            }
+            println!("MouseMove completed successfully");
+            Ok(())
+        },
+        ActionType::MouseClick => {
+            let button_str = params.button.ok_or("Missing button parameter for MouseClick")?;
+            let button = string_to_mouse_button(&button_str)
+                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
+            println!("Executing MouseClick: button={:?}, hold={:?}", button, params.hold);
+            if params.hold == Some(true) {
+                enigo.mouse_down(button);
+            } else {
+                enigo.mouse_click(button);
+            }
+            println!("MouseClick completed successfully");
+            Ok(())
+        },
+        ActionType::KeyPress => {
+            let key_str = params.key.ok_or("Missing key parameter for KeyPress")?;
+            let key = string_to_key(&key_str)
+                .ok_or_else(|| format!("Invalid key: {}", key_str))?;
+            println!("Executing KeyPress: key={:?}", key);
+            enigo.key_click(key);
+            println!("KeyPress completed successfully");
+            Ok(())
+        },
+        ActionType::KeyCombination => {
+            let keys_vec = params.keys.ok_or("Missing keys parameter for KeyCombination")?;
+            let mut enigo_keys = Vec::new();
+            for key_str in keys_vec {
+                let enigo_key = string_to_key(&key_str)
+                    .ok_or_else(|| format!("Invalid key in combination: {}", key_str))?;
+                enigo_keys.push(enigo_key);
+            }
+            println!("Executing KeyCombination: keys={:?}", enigo_keys);
+            for key in &enigo_keys {
+                enigo.key_down(*key);
+            }
+            for key in enigo_keys.iter().rev() {
+                enigo.key_up(*key);
+            }
+            println!("KeyCombination completed successfully");
+            Ok(())
+        },
+        ActionType::MouseRelease => {
+            let button_str = params.button.ok_or("Missing button parameter for MouseRelease")?;
+            let button = string_to_mouse_button(&button_str)
+                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
+            enigo.mouse_up(button);
+            Ok(())
+        },
+        ActionType::MouseDrag => {
+            let button_str = params.button.ok_or("Missing button parameter for MouseDrag")?;
+            let button = string_to_mouse_button(&button_str)
+                .ok_or_else(|| format!("Invalid mouse button for MouseDrag: {}", button_str))?;
+            let dx = params.x.ok_or("Missing dx (x) parameter for MouseDrag")?;
+            let dy = params.y.ok_or("Missing dy (y) parameter for MouseDrag")?;
+            let duration_ms = params.duration.unwrap_or(0);
+
+            enigo.mouse_down(button);
+            
+            // For MouseDrag, we still want the duration for smooth dragging
+            if duration_ms > 0 {
+                let steps = 20.max((duration_ms / 10) as i32); // At least 20 steps, or one step every 10ms
+                let step_dx = dx as f32 / steps as f32;
+                let step_dy = dy as f32 / steps as f32;
+                let sleep_duration = std::time::Duration::from_millis((duration_ms as u64) / (steps as u64));
+                
+                for i in 0..steps {
+                    enigo.mouse_move_relative(step_dx.round() as i32, step_dy.round() as i32);
+                    if i < steps - 1 { 
+                         if sleep_duration > std::time::Duration::from_millis(1) {
+                            std::thread::sleep(sleep_duration);
+                         }
+                    }
+                }
+            } else {
+                // Instantaneous move if duration is 0
+                enigo.mouse_move_relative(dx, dy);
+            }
+            
+            enigo.mouse_up(button);
+            Ok(())
+        },
+        ActionType::Delay => {
+            // This shouldn't be reached if called from the new async loops
+            println!("**************************************************************************");
+            println!("ERROR: execute_action was called with ActionType::Delay - this is wrong!");
+            println!("Delay should be handled by the async loop, not by execute_action.");
+            println!("Params: {:?}", params);
+            println!("**************************************************************************");
+            Err("Delay action type should be handled by the calling async loop".to_string())
+        },
+    }
+}
+
+// Helper function to execute actions safely on macOS (on main thread)
+#[cfg(target_os = "macos")]
+async fn execute_action_safe<R: Runtime>(action_type: ActionType, params: ActionParams, app_handle: Option<tauri::AppHandle<R>>) -> Result<(), String> {
+    if let Some(app) = app_handle {
+        println!("Executing action on macOS: {:?}", action_type);
+        let action_type_clone = action_type.clone();
+        let params_clone = params.clone();
+        
+        // Use a channel to get the result back from the main thread
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        // Check for accessibility permissions
+        println!("Checking accessibility permissions...");
+        let trusted = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
+        println!("Accessibility permissions status: {}", trusted);
+        
+        if !trusted {
+            println!("Accessibility permissions not granted!");
+            return Err("Accessibility permissions are required for UI automation. Please grant permissions in System Settings > Privacy & Security > Accessibility".to_string());
+        }
+        
+        println!("Running action on main thread...");
+        app.run_on_main_thread(move || {
+            println!("Inside main thread, executing action...");
+            let result = execute_action_impl(action_type_clone, params_clone);
+            println!("Action execution result: {:?}", result);
+            let _ = tx.send(result);
+        }).map_err(|e| format!("Failed to run on main thread: {}", e))?;
+        
+        println!("Waiting for action result...");
+        let result = rx.await.map_err(|e| format!("Failed to receive result: {}", e))?;
+        println!("Action completed with result: {:?}", result);
+        result
     } else {
-        enigo.mouse_move_to(x, y);
+        println!("Error: No app handle available for macOS UI automation");
+        Err("App handle is required for UI automation on macOS".to_string())
     }
-    
-    Ok(())
 }
 
-// Command to click the mouse
-#[tauri::command]
-fn click_mouse(button: String) -> Result<(), String> {
-    let mut enigo = create_enigo();
-    
-    let button = string_to_mouse_button(&button)
-        .ok_or_else(|| format!("Invalid mouse button: {}", button))?;
-        
-    enigo.mouse_click(button);
-    
-    Ok(())
-}
-
-// Command to press a key
-#[tauri::command]
-fn press_key(key: String) -> Result<(), String> {
-    let mut enigo = create_enigo();
-    
-    let key = string_to_key(&key)
-        .ok_or_else(|| format!("Invalid key: {}", key))?;
-        
-    enigo.key_click(key);
-    
-    Ok(())
-}
-
-// Command to press a key combination
-#[tauri::command]
-fn press_key_combination(keys: Vec<String>) -> Result<(), String> {
-    let mut enigo = create_enigo();
-    
-    let mut enigo_keys = Vec::new();
-    for key in keys {
-        let enigo_key = string_to_key(&key)
-            .ok_or_else(|| format!("Invalid key: {}", key))?;
-        enigo_keys.push(enigo_key);
-    }
-    
-    // Press all keys in sequence
-    for key in &enigo_keys {
-        enigo.key_down(*key);
-    }
-    
-    // Release all keys in reverse order
-    for key in enigo_keys.iter().rev() {
-        enigo.key_up(*key);
-    }
-    
-    Ok(())
+// For non-macOS platforms, just call the implementation directly
+#[cfg(not(target_os = "macos"))]
+async fn execute_action_safe<R: Runtime>(action_type: ActionType, params: ActionParams, _app_handle: Option<tauri::AppHandle<R>>) -> Result<(), String> {
+    execute_action_impl(action_type, params)
 }
 
 // Command to register a MIDI macro
@@ -318,143 +428,6 @@ fn cancel_macro(id: String) -> Result<(), String> {
     
     println!("Macro {} successfully canceled", id);
     Ok(())
-}
-
-// Command to execute an action based on a macro
-#[tauri::command]
-fn execute_action(action_type: ActionType, params: ActionParams) -> Result<(), String> {
-    execute_action_impl(action_type, params)
-}
-
-// Internal implementation that can be called from different contexts
-fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<(), String> {
-    // Create a new Enigo instance for each action execution
-    let mut enigo = create_enigo();
-    
-    match action_type {
-        ActionType::MouseMove => {
-            let x = params.x.ok_or("Missing x parameter for MouseMove")?;
-            let y = params.y.ok_or("Missing y parameter for MouseMove")?;
-            let relative = params.relative.unwrap_or(false);
-            if relative {
-                enigo.mouse_move_relative(x, y);
-            } else {
-                enigo.mouse_move_to(x, y);
-            }
-            Ok(())
-        },
-        ActionType::MouseClick => {
-            let button_str = params.button.ok_or("Missing button parameter for MouseClick")?;
-            let button = string_to_mouse_button(&button_str)
-                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
-            if params.hold == Some(true) {
-                enigo.mouse_down(button);
-            } else {
-                enigo.mouse_click(button);
-            }
-            Ok(())
-        },
-        ActionType::KeyPress => {
-            let key_str = params.key.ok_or("Missing key parameter for KeyPress")?;
-            let key = string_to_key(&key_str)
-                .ok_or_else(|| format!("Invalid key: {}", key_str))?;
-            enigo.key_click(key);
-            Ok(())
-        },
-        ActionType::KeyCombination => {
-            let keys_vec = params.keys.ok_or("Missing keys parameter for KeyCombination")?;
-            let mut enigo_keys = Vec::new();
-            for key_str in keys_vec {
-                let enigo_key = string_to_key(&key_str)
-                    .ok_or_else(|| format!("Invalid key in combination: {}", key_str))?;
-                enigo_keys.push(enigo_key);
-            }
-            for key in &enigo_keys {
-                enigo.key_down(*key);
-            }
-            for key in enigo_keys.iter().rev() {
-                enigo.key_up(*key);
-            }
-            Ok(())
-        },
-        ActionType::MouseRelease => {
-            let button_str = params.button.ok_or("Missing button parameter for MouseRelease")?;
-            let button = string_to_mouse_button(&button_str)
-                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
-            enigo.mouse_up(button);
-            Ok(())
-        },
-        ActionType::MouseDrag => {
-            let button_str = params.button.ok_or("Missing button parameter for MouseDrag")?;
-            let button = string_to_mouse_button(&button_str)
-                .ok_or_else(|| format!("Invalid mouse button for MouseDrag: {}", button_str))?;
-            let dx = params.x.ok_or("Missing dx (x) parameter for MouseDrag")?;
-            let dy = params.y.ok_or("Missing dy (y) parameter for MouseDrag")?;
-            let duration_ms = params.duration.unwrap_or(0);
-
-            enigo.mouse_down(button);
-            
-            // For MouseDrag, we still want the duration for smooth dragging
-            if duration_ms > 0 {
-                let steps = 20.max((duration_ms / 10) as i32); // At least 20 steps, or one step every 10ms
-                let step_dx = dx as f32 / steps as f32;
-                let step_dy = dy as f32 / steps as f32;
-                let sleep_duration = std::time::Duration::from_millis((duration_ms as u64) / (steps as u64));
-                
-                for i in 0..steps {
-                    enigo.mouse_move_relative(step_dx.round() as i32, step_dy.round() as i32);
-                    if i < steps - 1 { 
-                         if sleep_duration > std::time::Duration::from_millis(1) {
-                            std::thread::sleep(sleep_duration);
-                         }
-                    }
-                }
-            } else {
-                // Instantaneous move if duration is 0
-                enigo.mouse_move_relative(dx, dy);
-            }
-            
-            enigo.mouse_up(button);
-            Ok(())
-        },
-        ActionType::Delay => {
-            // This shouldn't be reached if called from the new async loops
-            println!("**************************************************************************");
-            println!("ERROR: execute_action was called with ActionType::Delay - this is wrong!");
-            println!("Delay should be handled by the async loop, not by execute_action.");
-            println!("Params: {:?}", params);
-            println!("**************************************************************************");
-            Err("Delay action type should be handled by the calling async loop".to_string())
-        },
-    }
-}
-
-// Helper function to execute actions safely on macOS (on main thread)
-#[cfg(target_os = "macos")]
-async fn execute_action_safe<R: Runtime>(action_type: ActionType, params: ActionParams, app_handle: Option<tauri::AppHandle<R>>) -> Result<(), String> {
-    if let Some(app) = app_handle {
-        let action_type_clone = action_type.clone();
-        let params_clone = params.clone();
-        
-        // Use a channel to get the result back from the main thread
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        
-        app.run_on_main_thread(move || {
-            let result = execute_action_impl(action_type_clone, params_clone);
-            let _ = tx.send(result);
-        }).map_err(|e| format!("Failed to run on main thread: {}", e))?;
-        
-        rx.await.map_err(|e| format!("Failed to receive result: {}", e))?
-    } else {
-        // Fallback to direct execution if no app handle available
-        execute_action_impl(action_type, params)
-    }
-}
-
-// For non-macOS platforms, just call the implementation directly
-#[cfg(not(target_os = "macos"))]
-async fn execute_action_safe<R: Runtime>(action_type: ActionType, params: ActionParams, _app_handle: Option<tauri::AppHandle<R>>) -> Result<(), String> {
-    execute_action_impl(action_type, params)
 }
 
 // Command to list MIDI inputs
@@ -1006,10 +979,6 @@ pub fn run() {
       Ok(())
     })
         .invoke_handler(tauri::generate_handler![
-            move_mouse,
-            click_mouse,
-            press_key,
-            press_key_combination,
             register_macro,
             get_macros,
             execute_action,

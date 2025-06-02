@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Button, Card, useDisclosure, Modal,addToast, ModalContent, Chip, ModalHeader, ModalBody, ModalFooter, DropdownItem, Dropdown, DropdownMenu, DropdownTrigger, Popover, PopoverTrigger, PopoverContent } from "@heroui/react";
+import { Button, Card, useDisclosure, Modal, addToast, ModalContent, Chip, ModalHeader, ModalBody, ModalFooter, DropdownItem, Dropdown, DropdownMenu, DropdownTrigger, Popover, PopoverTrigger, PopoverContent } from "@heroui/react";
 import { Icon } from "@iconify/react";
 import { MacroTemplate, MacroDefinition, MacroCategory } from "../types/macro";
 import { TemplateApply } from "./template-apply";
+import { BulkEncoderInitializer } from "./bulk-encoder-initializer";
 import { useTemplates } from "../hooks/use-templates";
 
 interface TemplatesGalleryProps {
@@ -24,7 +25,9 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
   const { templates, deleteTemplate, exportTemplates, importTemplates, loadTemplatesFromStorage } = useTemplates();
   const [categories, setCategories] = useState<MacroCategory[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<MacroTemplate | null>(null);
+  const [bulkInitTemplate, setBulkInitTemplate] = useState<MacroTemplate | null>(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isOpen: isBulkOpen, onOpen: onBulkOpen, onClose: onBulkClose } = useDisclosure();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const { isOpen: isErrorOpen, onOpen: onErrorOpen, onOpenChange: onErrorOpenChange } = useDisclosure();
@@ -269,7 +272,65 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
     onClose();
   };
   
+  const handleBulkInitialize = (template: MacroTemplate) => {
+    // Only allow bulk initialization for encoder templates
+    if (template.type.includes("encoder")) {
+      setBulkInitTemplate(template);
+      onBulkOpen();
+    } else {
+      addToast({
+        title: "Not Supported",
+        description: "Bulk initialization is only available for encoder templates",
+        color: "warning"
+      });
+    }
+  };
 
+  const handleBulkInitComplete = (macros: MacroDefinition[]) => {
+    // Save the macros to localStorage
+    const existingMacros = localStorage.getItem("midiMacros");
+    let allMacros: MacroDefinition[] = [];
+    
+    if (existingMacros) {
+      try {
+        allMacros = JSON.parse(existingMacros);
+      } catch (e) {
+        console.error("Failed to parse existing macros:", e);
+        allMacros = [];
+      }
+    }
+    
+    // Add the new macros
+    allMacros.push(...macros);
+    
+    // Save back to localStorage
+    localStorage.setItem("midiMacros", JSON.stringify(allMacros));
+    
+    // Show success message
+    addToast({
+      title: "Macros Created",
+      description: `Successfully created ${macros.length} macros from template`,
+      color: "success"
+    });
+    
+    // Close the bulk init modal
+    onBulkClose();
+    setBulkInitTemplate(null);
+    
+    // Navigate to macros view to show the created macros
+    onApplyTemplate({ 
+      id: "navigate-to-macros", 
+      name: "dummy", 
+      trigger: { type: "noteon" }, 
+      actions: [],
+      createdAt: ""
+    });
+  };
+
+  const handleCancelBulkInit = () => {
+    setBulkInitTemplate(null);
+    onBulkClose();
+  };
   
   const getCategoryColor = (categoryId?: string): string => {
     if (!categoryId) return "default";
@@ -516,30 +577,6 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         </div>
       </div>
       
-      <Modal isOpen={isErrorOpen} onOpenChange={onErrorOpenChange}>
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader className="flex flex-col gap-1">Import Error</ModalHeader>
-              <ModalBody>
-                <div className="flex items-center gap-2 text-danger">
-                  <Icon icon="lucide:alert-circle" className="text-2xl" />
-                  <p>{importError}</p>
-                </div>
-                <p className="mt-2">
-                  Please make sure you are importing a valid openGRADER template file.
-                </p>
-              </ModalBody>
-              <ModalFooter>
-                <Button color="primary" onPress={onClose}>
-                  OK
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-      
       <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-4 gap-4">
         {/* Create New Macro Card - iOS style glossy card */}
         {!showExportSelection && (
@@ -614,16 +651,60 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                 <div className="flex gap-1">
                   {!showExportSelection && (
                     <>
-                      <Button
-                        isIconOnly
-                        size="sm"
-                        variant="light"
-                        color="primary"
-                        onClick={(e) => handleTemplateAction(e, 'edit', template)}
-                        title="Edit Template"
-                      >
-                        <Icon icon="lucide:edit" className="text-primary" />
-                      </Button>
+                      <Dropdown>
+                        <DropdownTrigger>
+                          <Button
+                            isIconOnly
+                            size="sm"
+                            variant="light"
+                            color="default"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Icon icon="lucide:more-vertical" className="text-foreground-500" />
+                          </Button>
+                        </DropdownTrigger>
+                        <DropdownMenu aria-label="Template actions" variant="flat">
+                          <DropdownItem
+                            key="use"
+                            description="Apply this template to create a macro"
+                            startContent={<Icon icon="lucide:play" className="text-primary" />}
+                            onPress={() => handleSelectTemplate(template)}
+                          >
+                            Use Template
+                          </DropdownItem>
+                          
+                          {template.type.includes("encoder") ? (
+                            <DropdownItem
+                              key="bulk-init"
+                              description="Create multiple encoder groups at once"
+                              startContent={<Icon icon="lucide:layers" className="text-secondary" />}
+                              onPress={() => handleBulkInitialize(template)}
+                            >
+                              Bulk Initialize
+                            </DropdownItem>
+                          ) : null}
+                          
+                          <DropdownItem
+                            key="edit"
+                            description="Edit this template"
+                            startContent={<Icon icon="lucide:edit" className="text-warning" />}
+                            onPress={() => handleTemplateAction({} as React.MouseEvent, 'edit', template)}
+                          >
+                            Edit Template
+                          </DropdownItem>
+                          
+                          <DropdownItem
+                            key="delete"
+                            description="Delete this template"
+                            color="danger"
+                            startContent={<Icon icon="lucide:trash-2" className="text-danger" />}
+                            onPress={() => setDeletePopoverOpen(template.id)}
+                          >
+                            Delete Template
+                          </DropdownItem>
+                        </DropdownMenu>
+                      </Dropdown>
+                      
                       <Popover 
                         isOpen={deletePopoverOpen === template.id} 
                         onOpenChange={(open) => {
@@ -637,15 +718,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                         placement="top"
                       >
                         <PopoverTrigger>
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            color="danger"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Icon icon="lucide:trash-2" className="text-danger" />
-                          </Button>
+                          <div style={{ display: 'none' }} />
                         </PopoverTrigger>
                         <PopoverContent className="w-[240px]">
                           <div className="px-1 py-2 w-full">
@@ -702,18 +775,6 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                   </p>
                 )}
               </div>
-              
-              {!showExportSelection && (
-                <Button 
-                  fullWidth
-                  color={categoryColor as any}
-                  variant="flat"
-                  onPress={() => handleSelectTemplate(template)}
-                  className="mt-auto group-hover:opacity-80 transition-opacity"
-                >
-                  Use Template
-                </Button>
-              )}
             </Card>
           );
         })}
@@ -797,6 +858,54 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                   }}
                 />
               )}
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      {/* Bulk Encoder Initialization Modal */}
+      <Modal 
+        isOpen={isBulkOpen} 
+        onOpenChange={onBulkClose}
+        size="5xl"
+        scrollBehavior="inside"
+        classNames={{
+          base: "bg-background/90 backdrop-blur-md border border-white/10 shadow-xl",
+          header: "border-b border-white/10",
+          body: "py-5 max-h-[calc(100vh-200px)] overflow-y-auto",
+          closeButton: "hover:bg-white/10 active:bg-white/20"
+        }}
+      >
+        <ModalContent>
+          {() => (
+            <>
+              {bulkInitTemplate && (
+                <BulkEncoderInitializer
+                  template={bulkInitTemplate}
+                  categories={categories}
+                  onCancel={handleCancelBulkInit}
+                  onCreateMacros={handleBulkInitComplete}
+                />
+              )}
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      {/* Import Error Modal */}
+      <Modal isOpen={isErrorOpen} onOpenChange={onErrorOpenChange}>
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader>Import Error</ModalHeader>
+              <ModalBody>
+                <p>{importError}</p>
+              </ModalBody>
+              <ModalFooter>
+                <Button onPress={onClose}>
+                  Close
+                </Button>
+              </ModalFooter>
             </>
           )}
         </ModalContent>

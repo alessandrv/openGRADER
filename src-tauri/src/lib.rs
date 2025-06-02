@@ -145,6 +145,30 @@ fn string_to_key(key: &str) -> Option<Key> {
         "f10" => Some(Key::F10),
         "f11" => Some(Key::F11),
         "f12" => Some(Key::F12),
+        // Extended function keys (F13-F24)
+        "f13" => Some(Key::F13),
+        "f14" => Some(Key::F14),
+        "f15" => Some(Key::F15),
+        "f16" => Some(Key::F16),
+        "f17" => Some(Key::F17),
+        "f18" => Some(Key::F18),
+        "f19" => Some(Key::F19),
+        "f20" => Some(Key::F20),
+        "f21" => Some(Key::F21),
+        "f22" => Some(Key::F22),
+        "f23" => Some(Key::F23),
+        "f24" => Some(Key::F24),
+   
+
+        // Alternative arrow key names
+        "arrowleft" => Some(Key::Layout('←')),
+        "arrowright" => Some(Key::Layout('→')),
+        "arrowup" => Some(Key::Layout('↑')),
+        "arrowdown" => Some(Key::Layout('↓')),
+        // Additional system keys
+        "insert" => Some(Key::Insert),
+        "pause" => Some(Key::Pause),
+        "numlock" => Some(Key::Numlock),
         s if s.len() == 1 => {
             let c = s.chars().next()?;
             if c.is_ascii() {

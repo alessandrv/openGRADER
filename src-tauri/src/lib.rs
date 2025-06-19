@@ -42,6 +42,8 @@ static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
         // Removed enigo initialization
         midi_connection: Mutex::new(None),
         midi_ports: Mutex::new(Vec::new()),
+        mouse_button_states: Mutex::new(HashMap::new()),
+
         registered_macros: Mutex::new(Vec::new()),
         active_macros: Mutex::new(HashMap::new()),
         before_action_states: Mutex::new(HashMap::new()),
@@ -232,21 +234,28 @@ fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<
             Ok(())
         },
         ActionType::MouseClick => {
-            let button_str = params.button.ok_or("Missing button parameter for MouseClick")?;
+            let button_str = params.button.ok_or("Missing button parameter")?;
             let button = string_to_mouse_button(&button_str)?;
             
             if params.hold == Some(true) {
-                // Check if already held to avoid double-pressing
-                let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
+                let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
                 if !mouse_state.get(&button).unwrap_or(&false) {
                     enigo.mouse_down(button);
                     mouse_state.insert(button, true);
-                    println!("Mouse button {:?} pressed and tracked", button);
+                    println!("Mouse {:?} pressed and tracked", button);
+                } else {
+                    println!("Mouse {:?} already pressed, skipping", button);
                 }
             } else {
+                // For regular clicks, always release first to be safe
+                let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
+                if mouse_state.get(&button).unwrap_or(&false) {
+                    enigo.mouse_up(button);
+                    mouse_state.insert(button, false);
+                }
                 enigo.mouse_click(button);
             }
-        }
+        },
         ActionType::KeyPress => {
             let key_str = params.key.ok_or("Missing key parameter for KeyPress")?;
             let key = string_to_key(&key_str)
@@ -275,16 +284,18 @@ fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<
             Ok(())
         },
         ActionType::MouseRelease => {
-            let button_str = params.button.ok_or("Missing button parameter for MouseRelease")?;
+            let button_str = params.button.ok_or("Missing button parameter")?;
             let button = string_to_mouse_button(&button_str)?;
             
-            let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
+            let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
             if mouse_state.get(&button).unwrap_or(&false) {
                 enigo.mouse_up(button);
                 mouse_state.insert(button, false);
-                println!("Mouse button {:?} released and tracked", button);
+                println!("Mouse {:?} released and tracked", button);
+            } else {
+                println!("Mouse {:?} already released, skipping", button);
             }
-        }
+        },
         ActionType::MouseDrag => {
             let button_str = params.button.ok_or("Missing button parameter for MouseDrag")?;
             let button = string_to_mouse_button(&button_str)
@@ -424,7 +435,8 @@ fn cancel_macro(id: String) -> Result<(), String> {
             println!("Removed before_action_state for macro {}.", id);
         }
     }
-    
+    cleanup_mouse_state_for_macro(&id);
+
     println!("Macro {} successfully canceled", id);
     Ok(())
 }
@@ -959,7 +971,20 @@ fn get_cursor_position() -> Result<(i32, i32), String> {
     // Return explicitly as (x, y)
     Ok((position.0, position.1))
 }
-
+fn cleanup_mouse_state_for_macro(macro_id: &str) {
+    // You could track which macro pressed which buttons
+    // For now, just ensure all buttons are released
+    let mut enigo = create_enigo();
+    let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
+    
+    for (button, is_pressed) in mouse_state.iter_mut() {
+        if *is_pressed {
+            enigo.mouse_up(*button);
+            *is_pressed = false;
+            println!("Cleanup: released {:?} for macro {}", button, macro_id);
+        }
+    }
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()

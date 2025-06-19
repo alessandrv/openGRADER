@@ -29,6 +29,8 @@ pub struct AppState {
     midi_connection: Mutex<Option<MidiInputConnection<()>>>,
     midi_ports: Mutex<Vec<(String, usize)>>, // Store (port_name, index) pairs
     registered_macros: Mutex<Vec<MacroConfig>>, // Added to store macros
+    mouse_state: Mutex<HashMap<MouseButton, bool>>, // Track which buttons are pressed
+
     // Track active macros by their ID
     active_macros: Mutex<HashMap<String, ActiveMacro>>,
     // Track before_action execution state across triggers
@@ -231,17 +233,20 @@ fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<
         },
         ActionType::MouseClick => {
             let button_str = params.button.ok_or("Missing button parameter for MouseClick")?;
-            let button = string_to_mouse_button(&button_str)
-                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
-            println!("Executing MouseClick: button={:?}, hold={:?}", button, params.hold);
+            let button = string_to_mouse_button(&button_str)?;
+            
             if params.hold == Some(true) {
-                enigo.mouse_down(button);
+                // Check if already held to avoid double-pressing
+                let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
+                if !mouse_state.get(&button).unwrap_or(&false) {
+                    enigo.mouse_down(button);
+                    mouse_state.insert(button, true);
+                    println!("Mouse button {:?} pressed and tracked", button);
+                }
             } else {
                 enigo.mouse_click(button);
             }
-            println!("MouseClick completed successfully");
-            Ok(())
-        },
+        }
         ActionType::KeyPress => {
             let key_str = params.key.ok_or("Missing key parameter for KeyPress")?;
             let key = string_to_key(&key_str)
@@ -271,11 +276,15 @@ fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<
         },
         ActionType::MouseRelease => {
             let button_str = params.button.ok_or("Missing button parameter for MouseRelease")?;
-            let button = string_to_mouse_button(&button_str)
-                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
-            enigo.mouse_up(button);
-            Ok(())
-        },
+            let button = string_to_mouse_button(&button_str)?;
+            
+            let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
+            if mouse_state.get(&button).unwrap_or(&false) {
+                enigo.mouse_up(button);
+                mouse_state.insert(button, false);
+                println!("Mouse button {:?} released and tracked", button);
+            }
+        }
         ActionType::MouseDrag => {
             let button_str = params.button.ok_or("Missing button parameter for MouseDrag")?;
             let button = string_to_mouse_button(&button_str)

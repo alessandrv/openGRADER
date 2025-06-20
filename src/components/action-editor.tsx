@@ -1,5 +1,5 @@
 import React from "react";
-import { Card, Input, Button, Select, SelectItem, Checkbox, addToast, Modal, ModalContent, ModalHeader, ModalBody } from "@heroui/react";
+import { Card, Input, Button, Select, SelectItem, Checkbox, addToast, Modal, ModalContent, ModalHeader, ModalBody, Switch } from "@heroui/react";
 import { Icon } from "@iconify/react";
 import { Action } from "../types/macro";
 import { getCursorPosition } from "../lib/tauri";
@@ -137,30 +137,15 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
   const getDefaultParamsForType = (type: string): Record<string, any> => {
     switch (type) {
       case "keypress":
-        return { key: "", modifiers: [] };
-      case "keyhold":
-        return { key: "", duration: 500, modifiers: [] };
+        return { key: "", modifiers: [], hold: false, duration: 500 };
+      case "keyrelease":
+        return { key: "" };
       case "mouseclick":
-        return { button: "left", hold: false };
+        return { button: "left", hold: false, x: 0, y: 0 };
       case "mouserelease":
         return { button: "left" };
       case "mousemove":
-        return { 
-          x: 0, 
-          y: 0,
-          relative: false,
-          direction: "right", 
-          distance: 100
-        };
-      case "mousedrag":
-        return { 
-          button: "left", 
-          direction: "right", 
-          distance: 100,
-          duration: 500 
-        };
-      case "mousescroll":
-        return { x: 0, y: 0, amount: 100, direction: "down" };
+        return { x: 0, y: 0, relative: false, duration: 500 };
       case "delay":
         return { duration: 500 };
       default:
@@ -222,6 +207,15 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
                 {isDetectingKey ? "Detecting..." : "Detect Key"}
               </Button>
             </div>
+            
+            <Switch
+              isSelected={editedAction.params.hold || false}
+              onValueChange={(checked) => handleParamChange("hold", checked)}
+              className="mb-3"
+            >
+              Hold key (until released by Key Release action)
+            </Switch>
+            
             <div className="mb-3">
               <p className="text-sm mb-2">Modifiers</p>
               <div className="flex flex-wrap gap-2">
@@ -239,12 +233,12 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
           </>
         );
         
-      case "keyhold":
+      case "keyrelease":
         return (
           <>
             <div className="flex gap-2 items-end mb-3">
               <Input
-                label="Key"
+                label="Key to Release"
                 placeholder="e.g. a, b, Enter, Space"
                 value={editedAction.params.key || ""}
                 onValueChange={(value) => handleParamChange("key", value)}
@@ -266,28 +260,6 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
                 {isDetectingKey ? "Detecting..." : "Detect Key"}
               </Button>
             </div>
-            <Input
-              type="number"
-              label="Duration (ms)"
-              placeholder="Duration in milliseconds"
-              value={editedAction.params.duration?.toString() || "500"}
-              onValueChange={(value) => handleParamChange("duration", parseInt(value) || 0)}
-              className="mb-3"
-            />
-            <div className="mb-3">
-              <p className="text-sm mb-2">Modifiers</p>
-              <div className="flex flex-wrap gap-2">
-                {["Ctrl", "Alt", "Shift", "Meta"].map((modifier) => (
-                  <Checkbox
-                    key={modifier}
-                    isSelected={(editedAction.params.modifiers || []).includes(modifier)}
-                    onValueChange={() => handleModifierToggle(modifier)}
-                  >
-                    {modifier}
-                  </Checkbox>
-                ))}
-              </div>
-            </div>
           </>
         );
         
@@ -295,23 +267,91 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
         return (
           <>
             <Select
-              label="Button"
-              placeholder="Select mouse button"
+              label="Click Type"
+              placeholder="Select click type"
               selectedKeys={[editedAction.params.button || "left"]}
               onChange={(e) => handleParamChange("button", e.target.value)}
               className="mb-3"
             >
-              <SelectItem key="left">Left Button</SelectItem>
-              <SelectItem key="right">Right Button</SelectItem>
-              <SelectItem key="middle">Middle Button</SelectItem>
+              <SelectItem key="left">Left Click</SelectItem>
+              <SelectItem key="right">Right Click</SelectItem>
+              <SelectItem key="middle">Middle Click</SelectItem>
+              <SelectItem key="scroll-up">Scroll Up</SelectItem>
+              <SelectItem key="scroll-down">Scroll Down</SelectItem>
             </Select>
-            <Checkbox
+            
+            {!editedAction.params.button?.startsWith("scroll") && (
+              <>
+                <Switch
               isSelected={editedAction.params.hold || false}
-              onValueChange={(isSelected) => handleParamChange("hold", isSelected)}
+                  onValueChange={(checked) => handleParamChange("hold", checked)}
               className="mb-3"
             >
-              Hold button (requires a separate "Mouse Release" action)
-            </Checkbox>
+                  Hold down (don't release immediately)
+                </Switch>
+                
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <Input
+                    type="number"
+                    label="X Position"
+                    placeholder="X coordinate"
+                    value={editedAction.params.x?.toString() || "0"}
+                    onValueChange={(value) => handleParamChange("x", parseInt(value) || 0)}
+                  />
+                  <Input
+                    type="number"
+                    label="Y Position"
+                    placeholder="Y coordinate"
+                    value={editedAction.params.y?.toString() || "0"}
+                    onValueChange={(value) => handleParamChange("y", parseInt(value) || 0)}
+                  />
+                </div>
+                
+                <div className="relative">
+                  <Button 
+                    size="sm" 
+                    variant="flat" 
+                    color="primary"
+                    startContent={<Icon icon="lucide:mouse-pointer-click" />}
+                    onPress={handleCoordinateCapture}
+                    className="w-full mb-3"
+                    isDisabled={coordCaptureActive}
+                  >
+                    {coordCaptureActive ? "Detecting... (Press Ctrl+C to capture)" : "Capture Coordinates"}
+                  </Button>
+                  
+                  {coordCaptureActive && (
+                    <div className="absolute bottom-0 left-0 right-0 mb-10 bg-black/80 text-white p-2 rounded-md text-center text-sm">
+                      <div className="flex items-center justify-center gap-2">
+                        <Icon icon="lucide:mouse-pointer" className="text-white animate-pulse" />
+                        <div>
+                          <p className="font-bold">Move cursor to desired position</p>
+                          <p className="text-xs">Press <kbd className="px-1 py-0.5 bg-white/20 rounded">Ctrl+C</kbd> to capture or <kbd className="px-1 py-0.5 bg-white/20 rounded">ESC</kbd> to cancel</p>
+                        </div>
+                      </div>
+                      {mousePosition.x !== 0 && mousePosition.y !== 0 && (
+                        <p className="mt-1 font-mono">Current: X: {mousePosition.x}, Y: {mousePosition.y}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            
+            {editedAction.params.button?.startsWith("scroll") && (
+              <div className="mb-3">
+                <Input
+                  type="number"
+                  label="Scroll Amount"
+                  placeholder="Amount to scroll (default: 3)"
+                  value={editedAction.params.amount?.toString() || "3"}
+                  onValueChange={(value) => handleParamChange("amount", parseInt(value) || 3)}
+                />
+                <p className="text-xs text-foreground-500 mt-1">
+                  Higher values scroll further/faster
+                </p>
+              </div>
+            )}
           </>
         );
         
@@ -348,7 +388,7 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
                         // Switching to relative mode - add direction and distance
                         updatedParams.relative = true;
                         updatedParams.direction = updatedParams.direction || "right";
-                        updatedParams.distance = updatedParams.distance || 100;
+                        updatedParams.distance = updatedParams.distance || 10;
                         console.log("Enabling relative mode:", updatedParams);
                       } else {
                         // Switching to absolute mode
@@ -397,7 +437,7 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
                   type="number"
                   label="Distance (px)"
                   placeholder="Distance in pixels"
-                  value={editedAction.params.distance?.toString() || "100"}
+                  value={editedAction.params.distance?.toString() || "10"}
                   onValueChange={(value) => handleParamChange("distance", parseInt(value) || 0)}
                   className="mb-3"
                 />
@@ -463,121 +503,6 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
           </>
         );
         
-      case "mousedrag":
-        return (
-          <>
-            <Select
-              label="Button to Drag"
-              placeholder="Select mouse button"
-              selectedKeys={[editedAction.params.button || "left"]}
-              onChange={(e) => handleParamChange("button", e.target.value)}
-              className="mb-3"
-            >
-              <SelectItem key="left">Left Button</SelectItem>
-              <SelectItem key="right">Right Button</SelectItem>
-              <SelectItem key="middle">Middle Button</SelectItem>
-            </Select>
-            <Select
-              label="Direction"
-              placeholder="Select drag direction"
-              selectedKeys={[editedAction.params.direction || "right"]}
-              onChange={(e) => handleParamChange("direction", e.target.value)}
-              className="mb-3"
-            >
-              <SelectItem key="up">Up</SelectItem>
-              <SelectItem key="down">Down</SelectItem>
-              <SelectItem key="left">Left</SelectItem>
-              <SelectItem key="right">Right</SelectItem>
-            </Select>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <Input
-                type="number"
-                label="Distance (px)"
-                placeholder="Distance in pixels"
-                value={editedAction.params.distance?.toString() || "100"}
-                onValueChange={(value) => handleParamChange("distance", parseInt(value) || 0)}
-              />
-              <Input
-                type="number"
-                label="Duration (ms)"
-                placeholder="Duration in milliseconds"
-                value={editedAction.params.duration?.toString() || "500"}
-                onValueChange={(value) => handleParamChange("duration", parseInt(value) || 0)}
-              />
-            </div>
-          </>
-        );
-        
-      case "mousescroll":
-        return (
-          <>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <Input
-                type="number"
-                label="X Position"
-                placeholder="X coordinate"
-                value={editedAction.params.x?.toString() || "0"}
-                onValueChange={(value) => handleParamChange("x", parseInt(value) || 0)}
-              />
-              <Input
-                type="number"
-                label="Y Position"
-                placeholder="Y coordinate"
-                value={editedAction.params.y?.toString() || "0"}
-                onValueChange={(value) => handleParamChange("y", parseInt(value) || 0)}
-              />
-            </div>
-            <div className="relative">
-              <Button 
-                size="sm" 
-                variant="flat" 
-                color="primary"
-                startContent={<Icon icon="lucide:mouse-pointer-click" />}
-                onPress={handleCoordinateCapture}
-                className="w-full mb-3"
-                isDisabled={coordCaptureActive}
-              >
-                {coordCaptureActive ? "Detecting... (Press Ctrl+C to capture)" : "Capture Coordinates"}
-              </Button>
-              
-              {coordCaptureActive && (
-                <div className="absolute bottom-0 left-0 right-0 mb-10 bg-black/80 text-white p-2 rounded-md text-center text-sm">
-                  <div className="flex items-center justify-center gap-2">
-                    <Icon icon="lucide:mouse-pointer" className="text-white animate-pulse" />
-                    <div>
-                      <p className="font-bold">Move cursor to desired position</p>
-                      <p className="text-xs">Press <kbd className="px-1 py-0.5 bg-white/20 rounded">Ctrl+C</kbd> to capture or <kbd className="px-1 py-0.5 bg-white/20 rounded">ESC</kbd> to cancel</p>
-                    </div>
-                  </div>
-                  {mousePosition.x !== 0 && mousePosition.y !== 0 && (
-                    <p className="mt-1 font-mono">Current: X: {mousePosition.x}, Y: {mousePosition.y}</p>
-                  )}
-                </div>
-              )}
-            </div>
-            <Input
-              type="number"
-              label="Amount"
-              placeholder="Scroll amount"
-              value={editedAction.params.amount?.toString() || "100"}
-              onValueChange={(value) => handleParamChange("amount", parseInt(value) || 0)}
-              className="mb-3"
-            />
-            <Select
-              label="Direction"
-              placeholder="Select scroll direction"
-              selectedKeys={[editedAction.params.direction || "down"]}
-              onChange={(e) => handleParamChange("direction", e.target.value)}
-              className="mb-3"
-            >
-              <SelectItem key="up">Up</SelectItem>
-              <SelectItem key="down">Down</SelectItem>
-              <SelectItem key="left">Left</SelectItem>
-              <SelectItem key="right">Right</SelectItem>
-            </Select>
-          </>
-        );
-        
       case "delay":
         return (
           <Input
@@ -606,12 +531,10 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
           className="mb-3"
         >
           <SelectItem key="keypress">Key Press</SelectItem>
-          <SelectItem key="keyhold">Key Hold</SelectItem>
+          <SelectItem key="keyrelease">Key Release</SelectItem>
           <SelectItem key="mouseclick">Mouse Click</SelectItem>
-          <SelectItem key="mouserelease">Mouse Release</SelectItem>
           <SelectItem key="mousemove">Mouse Move</SelectItem>
-          <SelectItem key="mousedrag">Mouse Drag</SelectItem>
-          <SelectItem key="mousescroll">Mouse Scroll</SelectItem>
+          <SelectItem key="mouserelease">Mouse Release</SelectItem>
           <SelectItem key="delay">Delay</SelectItem>
         </Select>
       </div>

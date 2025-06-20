@@ -137,9 +137,9 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
   const getDefaultParamsForType = (type: string): Record<string, any> => {
     switch (type) {
       case "keypress":
-        return { key: "", modifiers: [] };
-      case "keyhold":
-        return { key: "", duration: 500, modifiers: [] };
+        return { key: "", modifiers: [], hold: false, duration: 500 };
+      case "keyrelease":
+        return { key: "" };
       case "mouseclick":
         return { button: "left", hold: false };
       case "mouserelease":
@@ -152,15 +152,8 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
           direction: "right", 
           distance: 100
         };
-      case "mousedrag":
-        return { 
-          button: "left", 
-          direction: "right", 
-          distance: 100,
-          duration: 500 
-        };
-      case "mousescroll":
-        return { x: 0, y: 0, amount: 100, direction: "down" };
+
+
       case "delay":
         return { duration: 500 };
       default:
@@ -170,7 +163,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
 
   const handleUpdateAction = (index: number, updatedAction: Action, section: string = "main") => {
     // Add validation for key press actions
-    if ((updatedAction.type === "keypress" || updatedAction.type === "keyhold") && 
+        if ((updatedAction.type === "keypress" || updatedAction.type === "keyrelease") && 
        (!updatedAction.params.key || updatedAction.params.key === "")) {
       addToast({
         title: "Invalid Action",
@@ -470,38 +463,52 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
   const renderActionButtons = (section: string) => {
     return (
       <div className="flex gap-2 mt-4">
-        <Button size="sm" variant="flat" onPress={() => handleAddAction("keypress", section)}>
-          + Key Press
-        </Button>
-        <Button size="sm" variant="flat" onPress={() => handleAddAction("mouseclick", section)}>
-          + Mouse Click
-        </Button>
-        <Button size="sm" variant="flat" onPress={() => handleAddAction("delay", section)}>
-          + Delay
-        </Button>
-        
-        {/* Use HeroUI Dropdown instead of custom hover solution */}
+        {/* Key Dropdown */}
         <Dropdown>
           <DropdownTrigger>
             <Button size="sm" variant="flat" endContent={<Icon icon="lucide:chevron-down" className="text-foreground-500" />}>
-              + More
+              + Key
+        </Button>
+          </DropdownTrigger>
+          <DropdownMenu 
+            aria-label="Key action types"
+            className="z-50"
+          >
+            <DropdownItem key="keypress" onPress={() => handleAddAction("keypress", section)}>
+              Key Press
+            </DropdownItem>
+            <DropdownItem key="keyrelease" onPress={() => handleAddAction("keyrelease", section)}>
+              Key Release
+            </DropdownItem>
+          </DropdownMenu>
+        </Dropdown>
+        
+        {/* Mouse Dropdown */}
+        <Dropdown>
+          <DropdownTrigger>
+            <Button size="sm" variant="flat" endContent={<Icon icon="lucide:chevron-down" className="text-foreground-500" />}>
+              + Mouse
             </Button>
           </DropdownTrigger>
           <DropdownMenu 
-            aria-label="Action types"
+            aria-label="Mouse action types"
             className="z-50"
           >
+            <DropdownItem key="mouseclick" onPress={() => handleAddAction("mouseclick", section)}>
+              Mouse Click
+            </DropdownItem>
             <DropdownItem key="mousemove" onPress={() => handleAddAction("mousemove", section)}>
               Mouse Move
-            </DropdownItem>
-            <DropdownItem key="keyhold" onPress={() => handleAddAction("keyhold", section)}>
-              Key Hold
             </DropdownItem>
             <DropdownItem key="mouserelease" onPress={() => handleAddAction("mouserelease", section)}>
               Mouse Release
             </DropdownItem>
           </DropdownMenu>
         </Dropdown>
+        
+        <Button size="sm" variant="flat" onPress={() => handleAddAction("delay", section)}>
+          + Delay
+        </Button>
       </div>
     );
   };
@@ -513,9 +520,9 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
     // Return different params based on action type
     switch (action.type) {
       case "keypress":
-        return ["key", "modifiers"];
-      case "keyhold":
-        return ["key", "modifiers", "duration"];
+        return ["key", "modifiers", "hold", "duration"];
+      case "keyrelease":
+        return ["key"];
       case "mouseclick":
         return ["button", "hold"];
       case "mouserelease":
@@ -524,10 +531,8 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
         return action.params.relative 
           ? ["relative", "direction", "distance", "duration"] 
           : ["x", "y", "relative", "duration"];
-      case "mousedrag":
-        return ["button", "direction", "distance", "duration"];
-      case "mousescroll":
-        return ["x", "y", "amount", "direction"];
+
+
       case "delay":
         return ["duration"];
       default:
@@ -970,11 +975,21 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({
 function getActionSummary(action: Action): string {
   switch (action.type) {
     case "keypress":
+      if (action.params.hold) {
+        return `Hold ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
+      } else {
       return `Press ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
-    case "keyhold":
-      return `Hold ${action.params.key} for ${action.params.duration}ms`;
+      }
+    case "keyrelease":
+      return `Release ${action.params.key}`;
     case "mouseclick":
+      if (action.params.button === "scroll-up") {
+        return `Scroll up (amount: ${action.params.amount || 3})`;
+      } else if (action.params.button === "scroll-down") {
+        return `Scroll down (amount: ${action.params.amount || 3})`;
+      } else {
       return `${action.params.button} click${action.params.hold ? ' (hold)' : ''}`;
+      }
     case "mouserelease":
       return `Release ${action.params.button} button`;
     case "mousemove":
@@ -983,10 +998,7 @@ function getActionSummary(action: Action): string {
       } else {
         return `Move to (${action.params.x}, ${action.params.y})`;
       }
-    case "mousedrag":
-      return `Drag ${action.params.direction} by ${action.params.distance}px in ${action.params.duration}ms`;
-    case "mousescroll":
-      return `Scroll ${action.params.direction} at (${action.params.x}, ${action.params.y})`;
+
     case "delay":
       return `Wait for ${action.params.duration}ms`;
     default:

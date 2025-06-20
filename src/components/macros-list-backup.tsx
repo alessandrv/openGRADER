@@ -944,6 +944,8 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
           return ActionType.KeyCombination;
         }
         return ActionType.KeyPress;
+      case "keyrelease":
+        return ActionType.KeyRelease;
       case "mouseclick":
         return ActionType.MouseClick;
       case "mouserelease":
@@ -970,11 +972,19 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
           // For key combinations (key + modifiers), format as a keys array
           const keys = [...params.modifiers, params.key];
           console.log(`Creating key combination with keys:`, keys);
-          return { keys };
+          return { 
+            keys,
+            hold: params.hold || false  // Include hold parameter for combinations
+          };
         } else {
           // Simple key press without modifiers
-          return { key: params.key || "" };
+          return { 
+            key: params.key || "",
+            hold: params.hold || false  // Include hold parameter for simple keys
+          };
         }
+      case "keyrelease":
+        return { key: params.key || "" };
       case "mouseclick":
         return {
           button: params.button || "left",
@@ -1038,11 +1048,21 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   function getActionSummary(action: Action): string {
     switch (action.type) {
       case "keypress":
+      if (action.params.hold) {
+        return `Hold ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
+      } else {
         return `Press ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
-      case "keyhold":
-        return `Hold ${action.params.key} for ${action.params.duration}ms`;
+      }
+    case "keyrelease":
+      return `Release ${action.params.key}`;
       case "mouseclick":
+      if (action.params.button === "scroll-up") {
+        return `Scroll up (amount: ${action.params.amount || 3})`;
+      } else if (action.params.button === "scroll-down") {
+        return `Scroll down (amount: ${action.params.amount || 3})`;
+      } else {
         return `${action.params.button} click${action.params.hold ? ' (hold)' : ''}`;
+      }
       case "mouserelease":
         return `Release ${action.params.button} button`;
       case "mousemove":
@@ -1053,8 +1073,6 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         }
       case "mousedrag":
         return `Drag ${action.params.direction} by ${action.params.distance}px in ${action.params.duration}ms`;
-      case "mousescroll":
-        return `Scroll ${action.params.direction} at (${action.params.x}, ${action.params.y})`;
       case "delay":
         return `Wait for ${action.params.duration}ms`;
       default:

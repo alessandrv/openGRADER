@@ -3,6 +3,7 @@ import { Card, Tabs, Tab, Divider, Button } from "@heroui/react";
 import { MacroBuilder } from "./components/macro-builder";
 import { MidiLog } from "./components/midi-log";
 import { MacrosList } from "./components/macros-list";
+import { SettingsPage } from "./components/settings-page";
 import { MidiProvider } from "./contexts/midi-context";
 import { MacroDefinition, MacroTemplate } from "./types/macro";
 import { TemplatesGallery } from "./components/templates-gallery";
@@ -12,7 +13,7 @@ import { useTemplates } from "./hooks/use-templates";
 import { Icon } from "@iconify/react";
 
 export default function App() {
-  // Views: "gallery", "create", "macros", "template", "edit-template"
+  // Views: "gallery", "create", "macros", "template", "edit-template", "settings"
   const [currentView, setCurrentView] = useState<string>("gallery");
   const [editingMacro, setEditingMacro] = useState<MacroDefinition | null>(null);
   const [templateSourceMacro, setTemplateSourceMacro] = useState<MacroDefinition | null>(null);
@@ -264,6 +265,13 @@ export default function App() {
             />
           </Card>
         );
+
+      case "settings":
+        return (
+          <Card className="p-4">
+            <SettingsPage />
+          </Card>
+        );
       
       default:
         return null;
@@ -276,7 +284,8 @@ export default function App() {
       "create": editingMacro ? "Edit Macro" : "Create New Macro",
       "macros": "My Macros",
       "template": "Create Template",
-      "edit-template": "Edit Template"
+      "edit-template": "Edit Template",
+      "settings": "Settings"
     };
     
     return (
@@ -293,6 +302,8 @@ export default function App() {
                 ? "Create custom macros triggered by MIDI inputs"
                 : currentView === "edit-template"
                 ? "Edit an existing template"
+                : currentView === "settings"
+                ? "Configure application behavior and preferences"
                 : "Create a reusable template from an existing macro"}
             </p>
           </div>
@@ -301,7 +312,7 @@ export default function App() {
             selectedKey={currentView === "create" || currentView === "template" || currentView === "edit-template" ? getBackButtonTarget() : currentView}
             onSelectionChange={(key) => {
               // Only allow navigation to main views
-              if (key === "gallery" || key === "macros") {
+              if (key === "gallery" || key === "macros" || key === "settings") {
                 setCurrentView(key.toString());
                 setEditingMacro(null);
                 setTemplateSourceMacro(null);
@@ -324,6 +335,15 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <Icon icon="lucide:list" />
                   <span>My Macros</span>
+                </div>
+              }
+            />
+            <Tab 
+              key="settings" 
+              title={
+                <div className="flex items-center gap-2">
+                  <Icon icon="lucide:settings" />
+                  <span>Settings</span>
                 </div>
               }
             />

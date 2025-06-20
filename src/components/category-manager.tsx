@@ -3,25 +3,39 @@ import { Button, Card, Input, Modal, ModalContent, ModalHeader, ModalBody, Modal
 import { Icon } from "@iconify/react";
 import { MacroCategory } from "../types/macro";
 
-// Updated color options with exactly 16 colors (removed info and success, added yellow and violet)
+// Rainbow palette with 20 colors ordered by hue - complete rainbow spectrum
 const colorOptions = [
-  { name: "Primary", value: "primary" },
-  { name: "Secondary", value: "secondary" },
-  { name: "Warning", value: "warning" },
-  { name: "Danger", value: "danger" },
-  { name: "Default", value: "default" },
-  { name: "Purple", value: "purple" },
-  { name: "Pink", value: "pink" },
   { name: "Red", value: "red" },
-  { name: "Orange", value: "orange" },
-  { name: "Yellow", value: "yellow" },
-  { name: "Green", value: "green" },
-  { name: "Teal", value: "teal" },
-  { name: "Blue", value: "blue" },
-  { name: "Indigo", value: "indigo" },
+  { name: "Rose", value: "rose" },
+  { name: "Pink", value: "pink" },
+  { name: "Fuchsia", value: "fuchsia" },
+  { name: "Purple", value: "purple" },
   { name: "Violet", value: "violet" },
-  { name: "Cyan", value: "cyan" }
+  { name: "Indigo", value: "indigo" },
+  { name: "Blue", value: "blue" },
+  { name: "Sky", value: "sky" },
+  { name: "Cyan", value: "cyan" },
+  { name: "Teal", value: "teal" },
+  { name: "Emerald", value: "emerald" },
+  { name: "Green", value: "green" },
+  { name: "Lime", value: "lime" },
+  { name: "Yellow", value: "yellow" },
+  { name: "Amber", value: "amber" },
+  { name: "Orange", value: "orange" },
+  { name: "Coral", value: "coral" },
+  { name: "Salmon", value: "salmon" },
+  { name: "Crimson", value: "crimson" }
 ];
+
+// Helper function to convert hex color to CSS custom property
+const hexToRgb = (hex: string) => {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : null;
+};
 
 interface CategoryManagerProps {
   onCategoriesChange: (categories: MacroCategory[]) => void;
@@ -32,7 +46,9 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
   const [categories, setCategories] = useState<MacroCategory[]>([]);
   const [editingCategory, setEditingCategory] = useState<MacroCategory | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
-  const [selectedColor, setSelectedColor] = useState("primary");
+  const [selectedColor, setSelectedColor] = useState("blue");
+  const [customColor, setCustomColor] = useState("#3b82f6"); // Default blue hex
+  const [isCustomColor, setIsCustomColor] = useState(false);
   
   const { isOpen, onOpen, onClose: closeModal, onOpenChange } = useDisclosure();
 
@@ -49,9 +65,9 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
     } else {
       // Initialize with default categories if none exist
       const defaultCategories: MacroCategory[] = [
-        { id: "default", name: "General", color: "default", isExpanded: true },
-        { id: "davinci", name: "DaVinci Resolve", color: "primary", isExpanded: true },
-        { id: "photoshop", name: "Photoshop", color: "secondary", isExpanded: true }
+        { id: "default", name: "General", color: "emerald", isExpanded: true },
+        { id: "davinci", name: "DaVinci Resolve", color: "blue", isExpanded: true },
+        { id: "photoshop", name: "Photoshop", color: "purple", isExpanded: true }
       ];
       setCategories(defaultCategories);
       saveCategories(defaultCategories);
@@ -66,14 +82,26 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
   const handleAddCategory = () => {
     setEditingCategory(null);
     setNewCategoryName("");
-    setSelectedColor("primary");
+    setSelectedColor("blue");
+    setCustomColor("#3b82f6");
+    setIsCustomColor(false);
     onOpen();
   };
 
   const handleEditCategory = (category: MacroCategory) => {
     setEditingCategory(category);
     setNewCategoryName(category.name);
-    setSelectedColor(category.color);
+    
+    // Check if the color is a predefined color or custom
+    const isPresetColor = colorOptions.some(option => option.value === category.color);
+    if (isPresetColor) {
+      setSelectedColor(category.color);
+      setIsCustomColor(false);
+    } else {
+      // It's a custom hex color
+      setCustomColor(category.color);
+      setIsCustomColor(true);
+    }
     onOpen();
   };
 
@@ -86,13 +114,15 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
   const handleSaveCategory = () => {
     if (!newCategoryName.trim()) return;
 
+    const finalColor = isCustomColor ? customColor : selectedColor;
+
     let updatedCategories: MacroCategory[];
 
     if (editingCategory) {
       // Update existing category
       updatedCategories = categories.map(cat => 
         cat.id === editingCategory.id 
-          ? { ...cat, name: newCategoryName, color: selectedColor }
+          ? { ...cat, name: newCategoryName, color: finalColor }
           : cat
       );
     } else {
@@ -100,7 +130,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
       const newCategory: MacroCategory = {
         id: crypto.randomUUID(),
         name: newCategoryName,
-        color: selectedColor,
+        color: finalColor,
         isExpanded: true
       };
       updatedCategories = [...categories, newCategory];
@@ -109,6 +139,23 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
     setCategories(updatedCategories);
     saveCategories(updatedCategories);
     closeModal();
+  };
+
+  const renderCategoryColor = (color: string) => {
+    // Check if it's a predefined color or custom hex
+    const isPresetColor = colorOptions.some(option => option.value === color);
+    
+    if (isPresetColor) {
+      return <div className={`category-color category-color-${color}`}></div>;
+    } else {
+      // Custom hex color
+      return (
+        <div 
+          className="category-color"
+          style={{ backgroundColor: color }}
+        ></div>
+      );
+    }
   };
 
   return (
@@ -130,7 +177,7 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
           {categories.map(category => (
             <div key={category.id} className="flex justify-between items-center p-2 hover:bg-default-50 rounded-md">
               <div className="flex items-center gap-2">
-                <div className={`category-color category-color-${category.color}`}></div>
+                {renderCategoryColor(category.color)}
                 <span>{category.name}</span>
                 {category.id === "default" && (
                   <Chip size="sm" variant="flat">Default</Chip>
@@ -191,18 +238,68 @@ export const CategoryManager: React.FC<CategoryManagerProps> = ({ onCategoriesCh
                 />
                 <div>
                   <p className="text-sm font-medium mb-2">Category Color</p>
-                  <div className="grid grid-cols-8 gap-3 max-h-[150px] overflow-y-auto p-2">
-                    {colorOptions.map(color => (
-                      <div 
-                        key={color.value}
-                        className={`category-color category-color-${color.value} cursor-pointer transition-transform ${
-                          selectedColor === color.value ? 'ring-2 ring-offset-2 ring-primary transform scale-125' : 'hover:scale-110'
-                        }`}
-                        onClick={() => setSelectedColor(color.value)}
-                        title={color.name}
-                      />
-                    ))}
+                  
+                  {/* Color type selector */}
+                  <div className="flex gap-2 mb-4">
+                    <Button
+                      size="sm"
+                      variant={!isCustomColor ? "solid" : "bordered"}
+                      color={!isCustomColor ? "primary" : "default"}
+                      onPress={() => setIsCustomColor(false)}
+                    >
+                      Preset Colors
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={isCustomColor ? "solid" : "bordered"}
+                      color={isCustomColor ? "primary" : "default"}
+                      onPress={() => setIsCustomColor(true)}
+                    >
+                      Custom Color
+                    </Button>
                   </div>
+
+                  {!isCustomColor ? (
+                    // Preset colors grid
+                    <div className="grid grid-cols-10 gap-2 max-h-[200px] overflow-y-auto p-2">
+                      {colorOptions.map(color => (
+                        <div 
+                          key={color.value}
+                          className={`category-color category-color-${color.value} cursor-pointer transition-transform ${
+                            selectedColor === color.value ? 'ring-2 ring-offset-2 ring-primary transform scale-125' : 'hover:scale-110'
+                          }`}
+                          onClick={() => setSelectedColor(color.value)}
+                          title={color.name}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    // Custom color picker
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="color"
+                          value={customColor}
+                          onChange={(e) => setCustomColor(e.target.value)}
+                          className="w-12 h-12 rounded-full border-2 border-default-200 cursor-pointer"
+                        />
+                        <Input
+                          label="Hex Color"
+                          value={customColor}
+                          onValueChange={setCustomColor}
+                          placeholder="#3b82f6"
+                          className="flex-1"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-default-500">Preview:</span>
+                        <div 
+                          className="category-color"
+                          style={{ backgroundColor: customColor }}
+                        ></div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </ModalBody>
               <ModalFooter>

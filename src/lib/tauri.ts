@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { AppSettings } from "../types/settings";
 
 // Types that match our Rust structs
 export enum ActionType {
   MouseMove = "MouseMove",
   MouseClick = "MouseClick",
   KeyPress = "KeyPress",
+  KeyRelease = "KeyRelease",
   KeyCombination = "KeyCombination",
   MouseRelease = "MouseRelease",
   MouseDrag = "MouseDrag",
@@ -22,6 +24,7 @@ export interface ActionParams {
   relative?: boolean;
   hold?: boolean;
   duration?: number;
+  amount?: number;
 }
 
 // New interface to represent an action within before/after actions arrays
@@ -87,4 +90,39 @@ export function listenToMidiStatus(callback: (status: string) => void): () => vo
   return () => {
     unlisten.then(unlistenFn => unlistenFn());
   };
+}
+
+// Global settings interface for Rust backend
+interface RustGlobalSettings {
+  macro_trigger_delay: number;
+  enable_macro_conflict_prevention: boolean;
+  default_timeout: number;
+}
+
+// Convert frontend settings to Rust format
+function toRustSettings(settings: AppSettings): RustGlobalSettings {
+  return {
+    macro_trigger_delay: settings.macroTriggerDelay,
+    enable_macro_conflict_prevention: settings.enableMacroConflictPrevention,
+    default_timeout: settings.defaultTimeout,
+  };
+}
+
+// Convert Rust settings to frontend format
+function fromRustSettings(rustSettings: RustGlobalSettings): AppSettings {
+  return {
+    macroTriggerDelay: rustSettings.macro_trigger_delay,
+    enableMacroConflictPrevention: rustSettings.enable_macro_conflict_prevention,
+    defaultTimeout: rustSettings.default_timeout,
+  };
+}
+
+export async function getGlobalSettings(): Promise<AppSettings> {
+  const rustSettings: RustGlobalSettings = await invoke("get_global_settings");
+  return fromRustSettings(rustSettings);
+}
+
+export async function updateGlobalSettings(settings: AppSettings): Promise<void> {
+  const rustSettings = toRustSettings(settings);
+  await invoke("update_global_settings", { newSettings: rustSettings });
 } 

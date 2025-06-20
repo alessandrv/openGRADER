@@ -23,6 +23,24 @@ struct BeforeActionState {
     cooldown: std::time::Duration,
 }
 
+// Global settings structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalSettings {
+    pub macro_trigger_delay: u64, // Delay in milliseconds
+    pub enable_macro_conflict_prevention: bool,
+    pub default_timeout: u32,
+}
+
+impl Default for GlobalSettings {
+    fn default() -> Self {
+        Self {
+            macro_trigger_delay: 0, // 0ms default (no delay)
+            enable_macro_conflict_prevention: true,
+            default_timeout: 500,
+        }
+    }
+}
+
 // Shared state for the application - removed Enigo from here
 pub struct AppState {
     // Removed enigo from here since it's not thread-safe
@@ -30,11 +48,16 @@ pub struct AppState {
     midi_ports: Mutex<Vec<(String, usize)>>, // Store (port_name, index) pairs
     registered_macros: Mutex<Vec<MacroConfig>>, // Added to store macros
     mouse_state: Mutex<HashMap<MouseButton, bool>>, // Track which buttons are pressed
+    key_state: Mutex<HashMap<Key, bool>>, // Track which keys are pressed
 
     // Track active macros by their ID
     active_macros: Mutex<HashMap<String, ActiveMacro>>,
     // Track before_action execution state across triggers
     before_action_states: Mutex<HashMap<String, BeforeActionState>>,
+    // Global settings
+    global_settings: Mutex<GlobalSettings>,
+    // Track last macro trigger time per group for delay enforcement
+    last_group_triggers: Mutex<HashMap<String, std::time::Instant>>,
 }
 
 static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
@@ -42,11 +65,14 @@ static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
         // Removed enigo initialization
         midi_connection: Mutex::new(None),
         midi_ports: Mutex::new(Vec::new()),
-        mouse_button_states: Mutex::new(HashMap::new()),
+        mouse_state: Mutex::new(HashMap::new()),
+        key_state: Mutex::new(HashMap::new()),
 
         registered_macros: Mutex::new(Vec::new()),
         active_macros: Mutex::new(HashMap::new()),
         before_action_states: Mutex::new(HashMap::new()),
+        global_settings: Mutex::new(GlobalSettings::default()),
+        last_group_triggers: Mutex::new(HashMap::new()),
     })
 });
 
@@ -92,6 +118,7 @@ pub enum ActionType {
     MouseMove,
     MouseClick,
     KeyPress,
+    KeyRelease,
     KeyCombination,
     MouseRelease,
     MouseDrag,
@@ -118,6 +145,8 @@ pub struct ActionParams {
     pub hold: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount: Option<i32>,
 }
 
 impl Default for ActionParams {
@@ -132,6 +161,7 @@ impl Default for ActionParams {
             relative: None,
             hold: None,
             duration: None,
+            amount: None,
         }
     }
 }
@@ -235,10 +265,24 @@ fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<
         },
         ActionType::MouseClick => {
             let button_str = params.button.ok_or("Missing button parameter")?;
-            let button = string_to_mouse_button(&button_str)?;
+            
+            // Handle scroll actions
+            if button_str == "scroll-up" || button_str == "scroll-down" {
+                let amount = params.amount.unwrap_or(3);
+                let scroll_amount = if button_str == "scroll-up" { -amount } else { amount };
+                
+                println!("Executing mouse scroll: direction={}, amount={}", button_str, scroll_amount);
+                enigo.mouse_scroll_y(scroll_amount);
+                println!("Mouse scroll completed successfully");
+                return Ok(());
+            }
+            
+            // Handle regular mouse clicks
+            let button = string_to_mouse_button(&button_str)
+                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
             
             if params.hold == Some(true) {
-                let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
+                let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
                 if !mouse_state.get(&button).unwrap_or(&false) {
                     enigo.mouse_down(button);
                     mouse_state.insert(button, true);
@@ -248,21 +292,57 @@ fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<
                 }
             } else {
                 // For regular clicks, always release first to be safe
-                let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
-                if mouse_state.get(&button).unwrap_or(&false) {
+                let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
+                if *mouse_state.get(&button).unwrap_or(&false) {
                     enigo.mouse_up(button);
                     mouse_state.insert(button, false);
                 }
                 enigo.mouse_click(button);
             }
+            Ok(())
         },
         ActionType::KeyPress => {
             let key_str = params.key.ok_or("Missing key parameter for KeyPress")?;
             let key = string_to_key(&key_str)
                 .ok_or_else(|| format!("Invalid key: {}", key_str))?;
+            
+            if params.hold == Some(true) {
+                let mut key_state = APP_STATE.key_state.lock().unwrap();
+                if !key_state.get(&key).unwrap_or(&false) {
+                    println!("Executing KeyPress with hold: key={:?}", key);
+                    enigo.key_down(key);
+                    key_state.insert(key, true);
+                    println!("Key {:?} pressed and held, tracked in state", key);
+                } else {
+                    println!("Key {:?} already held, skipping", key);
+                }
+            } else {
+                // For regular key presses, always release first to be safe
+                let mut key_state = APP_STATE.key_state.lock().unwrap();
+                if *key_state.get(&key).unwrap_or(&false) {
+                    enigo.key_up(key);
+                    key_state.insert(key, false);
+                }
             println!("Executing KeyPress: key={:?}", key);
             enigo.key_click(key);
             println!("KeyPress completed successfully");
+            }
+            Ok(())
+        },
+        ActionType::KeyRelease => {
+            let key_str = params.key.ok_or("Missing key parameter for KeyRelease")?;
+            let key = string_to_key(&key_str)
+                .ok_or_else(|| format!("Invalid key: {}", key_str))?;
+            
+            let mut key_state = APP_STATE.key_state.lock().unwrap();
+            if *key_state.get(&key).unwrap_or(&false) {
+                println!("Executing KeyRelease: key={:?}", key);
+                enigo.key_up(key);
+                key_state.insert(key, false);
+                println!("Key {:?} released and tracked", key);
+            } else {
+                println!("Key {:?} already released, skipping", key);
+            }
             Ok(())
         },
         ActionType::KeyCombination => {
@@ -285,16 +365,18 @@ fn execute_action_impl(action_type: ActionType, params: ActionParams) -> Result<
         },
         ActionType::MouseRelease => {
             let button_str = params.button.ok_or("Missing button parameter")?;
-            let button = string_to_mouse_button(&button_str)?;
+            let button = string_to_mouse_button(&button_str)
+                .ok_or_else(|| format!("Invalid mouse button: {}", button_str))?;
             
-            let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
-            if mouse_state.get(&button).unwrap_or(&false) {
+            let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
+            if *mouse_state.get(&button).unwrap_or(&false) {
                 enigo.mouse_up(button);
                 mouse_state.insert(button, false);
                 println!("Mouse {:?} released and tracked", button);
             } else {
                 println!("Mouse {:?} already released, skipping", button);
             }
+            Ok(())
         },
         ActionType::MouseDrag => {
             let button_str = params.button.ok_or("Missing button parameter for MouseDrag")?;
@@ -557,6 +639,67 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                 }
 
                 if trigger_match {
+                    // Determine which group key to use for delay tracking
+                    let group_key = if let Some(ref group_id) = macro_config.groupId {
+                        group_id.clone()
+                    } else {
+                        macro_config.id.clone()
+                    };
+                    
+                    // Check for trigger delay between different groups
+                    let should_delay = {
+                        let settings = APP_STATE.global_settings.lock().unwrap();
+                        let delay_ms = settings.macro_trigger_delay;
+                        
+                        if delay_ms > 0 {
+                            let mut last_group_triggers = APP_STATE.last_group_triggers.lock().unwrap();
+                            let now = std::time::Instant::now();
+                            
+                            // Check if we have any previous triggers from different groups
+                            let mut should_apply_delay = false;
+                            let mut delay_to_apply = None;
+                            
+                            // Look for the most recent trigger from a different group
+                            let mut most_recent_different_group = None;
+                            for (other_group_key, last_time) in last_group_triggers.iter() {
+                                if other_group_key != &group_key {
+                                    if let Some((_, prev_time)) = most_recent_different_group {
+                                        if *last_time > prev_time {
+                                            most_recent_different_group = Some((other_group_key.clone(), *last_time));
+                                        }
+                                    } else {
+                                        most_recent_different_group = Some((other_group_key.clone(), *last_time));
+                                    }
+                                }
+                            }
+                            
+                            // If we found a recent trigger from a different group, check if we need to delay
+                            if let Some((other_group, last_time)) = most_recent_different_group {
+                                let elapsed = now.duration_since(last_time);
+                                let required_delay = std::time::Duration::from_millis(delay_ms);
+                                
+                                if elapsed < required_delay {
+                                    let remaining_delay = required_delay - elapsed;
+                                    println!("Delaying macro trigger by {:?} due to recent trigger from different group '{}' (settings: {}ms, elapsed: {:?})", 
+                                             remaining_delay, other_group, delay_ms, elapsed);
+                                    delay_to_apply = Some(remaining_delay);
+                                    should_apply_delay = true;
+                                }
+                            }
+                            
+                            // Update the trigger time for this group regardless of delay
+                            last_group_triggers.insert(group_key.clone(), now);
+                            
+                            if should_apply_delay {
+                                delay_to_apply
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
                     // We need to clone everything from macro_config to avoid borrowing issues in the async context
                     let main_actions_clone = macro_config.actions.clone(); // Clone the vec of actions
                     let macro_name_clone = macro_config.name.clone();
@@ -574,6 +717,10 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                     // And use the app_handle to call the command
                     let app_handle_clone = app_handle_for_macros.clone();
                     let _ = tauri::async_runtime::spawn(async move {
+                        // Apply delay if needed
+                        if let Some(delay) = should_delay {
+                            tokio::time::sleep(delay).await;
+                        }
                         println!("Macro triggered: {} (timeout value: {:?}ms)", 
                             macro_name_clone, 
                             timeout);
@@ -678,25 +825,8 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                             }
                         }
                         
-                        // We need to ALSO protect any existing before_action_state for rapid repeat triggers within same group
-                        // This prevents the second 'c' issue
-                        {
-                            let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
-                            if let Some(_) = before_action_states.get(&active_macro_key) {
-                                // We've previously executed a before action for this group
-                                // For rapid repeat triggers, we need to ensure it doesn't happen again until timeout
-                                println!("WARNING: Found lingering before_action_state for group {} - Protecting it", active_macro_key);
-                                
-                                // Don't remove it, but make sure we extend the cooldown timer
-                                // This ensures the before action won't run again until after actions complete
-                                before_action_states.insert(active_macro_key.clone(), BeforeActionState {
-                                    last_executed: std::time::Instant::now(),
-                                    cooldown: std::time::Duration::from_millis(BEFORE_ACTION_COOLDOWN_MS * 2), // Use longer timeout
-                                });
-                                
-                                println!("Extended before_action protection for group {}", active_macro_key);
-                            }
-                        }
+                        // Note: We intentionally do NOT modify the before_action_state here.
+                        // The before action protection logic below will handle whether to execute or skip.
                         
                         {
                         }
@@ -876,7 +1006,56 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                             now, task_key, timeout_ms);
                                     }
                                 }
+                            } else {
+                                // No after actions to schedule, but we need to clean up before_action_state
+                                // after a short delay to allow before actions to run again
+                                println!("No after actions scheduled, will clean up before_action_state for macro: {}", macro_name_clone);
+                                
+                                // Use shorter cleanup delay for macros without after actions
+                                const NO_AFTER_ACTIONS_CLEANUP_DELAY_MS: u64 = 1000; // 1 second
+                                
+                                let cleanup_state_key = if let Some(ref group_id) = group_id_clone {
+                                    group_id.clone()
+                                } else {
+                                    macro_id_clone.clone()
+                                };
+                                
+                                // Spawn a cleanup task
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(NO_AFTER_ACTIONS_CLEANUP_DELAY_MS)).await;
+                                    
+                                    // Clean up the before_action_state so before actions can run again
+                                    let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
+                                    if before_action_states.remove(&cleanup_state_key).is_some() {
+                                        println!("Cleaned up before_action_state after {}ms for macro group {} (no after actions)", 
+                                                 NO_AFTER_ACTIONS_CLEANUP_DELAY_MS, cleanup_state_key);
+                                    }
+                                });
                             }
+                        } else {
+                            // No after actions exist at all, still need to clean up before_action_state
+                            println!("No after actions exist, will clean up before_action_state for macro: {}", macro_name_clone);
+                            
+                            // Use shorter cleanup delay for macros without after actions
+                            const NO_AFTER_ACTIONS_CLEANUP_DELAY_MS: u64 = 1000; // 1 second
+                            
+                            let cleanup_state_key = if let Some(ref group_id) = group_id_clone {
+                                group_id.clone()
+                            } else {
+                                macro_id_clone.clone()
+                            };
+                            
+                            // Spawn a cleanup task
+                            tokio::spawn(async move {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(NO_AFTER_ACTIONS_CLEANUP_DELAY_MS)).await;
+                                
+                                // Clean up the before_action_state so before actions can run again
+                                let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
+                                if before_action_states.remove(&cleanup_state_key).is_some() {
+                                    println!("Cleaned up before_action_state after {}ms for macro group {} (no after actions)", 
+                                             NO_AFTER_ACTIONS_CLEANUP_DELAY_MS, cleanup_state_key);
+                                }
+                            });
                         }
                     });
                 }
@@ -971,17 +1150,42 @@ fn get_cursor_position() -> Result<(i32, i32), String> {
     // Return explicitly as (x, y)
     Ok((position.0, position.1))
 }
+
+// Command to get global settings
+#[tauri::command]
+fn get_global_settings() -> Result<GlobalSettings, String> {
+    let settings = APP_STATE.global_settings.lock().unwrap();
+    Ok(settings.clone())
+}
+
+// Command to update global settings
+#[tauri::command]
+fn update_global_settings(new_settings: GlobalSettings) -> Result<(), String> {
+    let mut settings = APP_STATE.global_settings.lock().unwrap();
+    *settings = new_settings;
+    println!("Global settings updated: {:?}", *settings);
+    Ok(())
+}
 fn cleanup_mouse_state_for_macro(macro_id: &str) {
     // You could track which macro pressed which buttons
     // For now, just ensure all buttons are released
     let mut enigo = create_enigo();
-    let mut mouse_state = APP_STATE.mouse_button_states.lock().unwrap();
+    let mut mouse_state = APP_STATE.mouse_state.lock().unwrap();
+    let mut key_state = APP_STATE.key_state.lock().unwrap();
     
     for (button, is_pressed) in mouse_state.iter_mut() {
         if *is_pressed {
             enigo.mouse_up(*button);
             *is_pressed = false;
-            println!("Cleanup: released {:?} for macro {}", button, macro_id);
+            println!("Cleanup: released mouse {:?} for macro {}", button, macro_id);
+        }
+    }
+    
+    for (key, is_pressed) in key_state.iter_mut() {
+        if *is_pressed {
+            enigo.key_up(*key);
+            *is_pressed = false;
+            println!("Cleanup: released key {:?} for macro {}", key, macro_id);
         }
     }
 }
@@ -1011,7 +1215,10 @@ pub fn run() {
             start_midi_listening_rust,
             stop_midi_listening_rust,
             cancel_macro,
-            get_cursor_position
+            get_cursor_position,
+            // Global settings commands
+            get_global_settings,
+            update_global_settings
         ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -621,6 +621,8 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   const [editingCategory, setEditingCategory] = useState<MacroCategory | null>(null);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [selectedColor, setSelectedColor] = useState("primary");
+  const [customColor, setCustomColor] = useState("#3b82f6"); // Default blue hex
+  const [isCustomColor, setIsCustomColor] = useState(false);
 
   // Add state for MIDI conflict resolution
   const [conflictModal, setConflictModal] = useState<{
@@ -706,114 +708,125 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     requestAnimationFrame(animate);
   }, [easeOutCubic, setRandomSeed]);
 
-  // Function to load macros from localStorage
-  const loadMacrosFromStorage = useCallback(() => {
-    console.log("Loading macros from localStorage");
-    const storedMacros = localStorage.getItem("midiMacros");
-    if (storedMacros) {
-      try {
-        const parsedMacros = JSON.parse(storedMacros);
-        
-        // Debug: Check for duplicates in loaded macros
-        const macroIds = parsedMacros.map((m: MacroDefinition) => m.id);
-        const uniqueIds = new Set(macroIds);
-        const hasDuplicates = macroIds.length !== uniqueIds.size;
-        
-        if (hasDuplicates) {
-          console.warn("Found duplicate macro IDs in localStorage!");
+
+  
+  // Single initialization effect - loads everything once
+  useEffect(() => {
+    const initializeApp = async () => {
+      console.log("Initializing MacrosList component");
+      
+      // Load categories first
+      loadCategories();
+      
+      // Load macro order or initialize it
+      const storedOrder = localStorage.getItem("macroOrder");
+      if (storedOrder) {
+        try {
+          const parsedOrder = JSON.parse(storedOrder);
+          setMacroOrder(parsedOrder);
+        } catch (e) {
+          console.error("Failed to parse macro order from localStorage:", e);
+          setMacroOrder({});
+        }
+      }
+      
+      // Load macros from localStorage
+      console.log("Loading macros from localStorage");
+      const storedMacros = localStorage.getItem("midiMacros");
+      let loadedMacros: MacroDefinition[] = [];
+      
+      if (storedMacros) {
+        try {
+          const parsedMacros = JSON.parse(storedMacros);
           
-          // Find the duplicates
-          const duplicateIds = macroIds.filter((id: string, idx: number) => 
-            macroIds.indexOf(id) !== idx
-          );
+          // Debug: Check for duplicates in loaded macros
+          const macroIds = parsedMacros.map((m: MacroDefinition) => m.id);
+          const uniqueIds = new Set(macroIds);
+          const hasDuplicates = macroIds.length !== uniqueIds.size;
           
-          console.warn(`Duplicate IDs: ${duplicateIds.join(", ")}`);
-          
-          // Find duplicate groups
-          const groupedMacros = parsedMacros.reduce((acc: Record<string, any[]>, macro: MacroDefinition) => {
-            if (!acc[macro.id]) acc[macro.id] = [];
-            acc[macro.id].push(macro);
-            return acc;
-          }, {});
-          
-          // Log details about duplicates
-          Object.entries(groupedMacros)
-            .filter(([_, macros]) => (macros as any[]).length > 1)
-            .forEach(([id, macros]) => {
-              console.warn(`Duplicate ID ${id}:`);
-              (macros as any[]).forEach((m, i) => {
-                console.warn(`  ${i+1}: ${m.name} (${m.type}) - Group: ${m.groupId || "none"}`);
-              });
-            });
+          if (hasDuplicates) {
+            console.warn("Found duplicate macro IDs in localStorage!");
+            
+            // Find the duplicates
+            const duplicateIds = macroIds.filter((id: string, idx: number) => 
+              macroIds.indexOf(id) !== idx
+            );
+            
+            console.warn(`Duplicate IDs: ${duplicateIds.join(", ")}`);
             
             // Filter out duplicates before setting state - keep only the first occurrence
-            const uniqueMacros = parsedMacros.filter((macro: MacroDefinition, idx: number) => 
+            loadedMacros = parsedMacros.filter((macro: MacroDefinition, idx: number) => 
               macroIds.indexOf(macro.id) === idx
             );
             
-            setMacros(uniqueMacros);
-            
             // Write back de-duplicated macros to localStorage
-            localStorage.setItem("midiMacros", JSON.stringify(uniqueMacros));
+            localStorage.setItem("midiMacros", JSON.stringify(loadedMacros));
             console.log("De-duplicated macros saved back to localStorage");
-        } else {
-          // No duplicates, proceed normally
-          console.log(`Loaded ${parsedMacros.length} macros from localStorage`);
-          setMacros(parsedMacros);
+          } else {
+            loadedMacros = parsedMacros;
+            console.log(`Loaded ${parsedMacros.length} macros from localStorage`);
+          }
+        } catch (e) {
+          console.error("Failed to parse macros from localStorage:", e);
+          loadedMacros = [];
         }
-      } catch (e) {
-        console.error("Failed to parse macros from localStorage:", e);
-        setMacros([]);
+      } else {
+        console.log("No macros found in localStorage");
+        loadedMacros = [];
       }
-    } else {
-      console.log("No macros found in localStorage");
-      setMacros([]);
-    }
-  }, []);
-  
-  useEffect(() => {
-    // Load macros from localStorage on mount
-    loadMacrosFromStorage();
-    
-    // Load active macros from localStorage
-    const activeFromStorage = localStorage.getItem("activeMidiMacros");
-    if (activeFromStorage) {
-      try {
-        const activeIds = JSON.parse(activeFromStorage);
-        if (Array.isArray(activeIds)) {
-          setActiveMacros(new Set(activeIds));
-          
-          // Activate these macros in the backend
-          if (activeIds.length > 0) {
-            // We'll activate them slightly delayed to ensure everything is initialized
-            setTimeout(() => {
-              activeIds.forEach(id => {
-                handleToggleMacro(id, true, false); // The false prevents saving to storage again
-              });
-            }, 1000); // 1-second delay to ensure app is fully loaded
+      
+      // Set macros state
+      setMacros(loadedMacros);
+      
+      // Handle reactivating saved macros if we have any macros
+      if (loadedMacros.length > 0) {
+        const activeFromStorage = localStorage.getItem("activeMidiMacros");
+        if (activeFromStorage) {
+          try {
+            const activeIds = JSON.parse(activeFromStorage);
+            if (Array.isArray(activeIds) && activeIds.length > 0) {
+              console.log(`Reactivating ${activeIds.length} macros from storage:`, activeIds);
+              
+              const newActiveMacros = new Set<string>();
+              
+              // Process reactivation synchronously to avoid multiple renders
+              for (const id of activeIds) {
+                try {
+                  const macro = loadedMacros.find(m => m.id === id);
+                  if (macro) {
+                    console.log(`Reactivating macro: ${macro.name} (${id})`);
+                    
+                    // Convert to MacroConfig format
+                    const config = createMacroConfig(macro);
+                    
+                    // Register with Tauri backend
+                    await registerMacro(config);
+                    
+                    // Track as active
+                    newActiveMacros.add(id);
+                    
+                    console.log(`Successfully reactivated macro: ${macro.name}`);
+                  } else {
+                    console.warn(`Could not find macro with ID: ${id}`);
+                  }
+                } catch (error) {
+                  console.error(`Error reactivating macro ${id}:`, error);
+                }
+              }
+              
+              // Update active macros state once at the end
+              setActiveMacros(newActiveMacros);
+              console.log(`Reactivated ${newActiveMacros.size} macros successfully`);
+            }
+          } catch (e) {
+            console.error("Failed to parse active macros from storage:", e);
           }
         }
-      } catch (e) {
-        console.error("Failed to parse active macros from storage:", e);
       }
-    }
+    };
     
-    // Load categories
-    loadCategories();
-    
-    // Load macro order or initialize it
-    const storedOrder = localStorage.getItem("macroOrder");
-    if (storedOrder) {
-      try {
-        const parsedOrder = JSON.parse(storedOrder);
-        setMacroOrder(parsedOrder);
-      } catch (e) {
-        console.error("Failed to parse macro order from localStorage:", e);
-        // Initialize empty order
-        setMacroOrder({});
-      }
-    }
-  }, []);
+    initializeApp();
+  }, []); // Only run once on mount
 
   // Load categories from localStorage
   const loadCategories = () => {
@@ -983,10 +996,20 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         for (const macroToActivate of macrosToToggle) {
           // Helper function to map Action to MacroAction
           const convertAction = (action: Action): MacroAction => {
+            try {
+              const actionType = mapActionType(action.type, action.params);
+              const actionParams = mapActionParams(action.type, action.params);
+              
+              console.log(`Converting action: ${action.type}`, { actionType, actionParams });
+              
             return {
-              action_type: mapActionType(action.type, action.params),
-              action_params: mapActionParams(action.type, action.params)
+                action_type: actionType,
+                action_params: actionParams
             };
+            } catch (err) {
+              console.error(`Error converting action ${action.type}:`, err, action);
+              throw err;
+            }
           };
           
           // Convert to a format suitable for Tauri
@@ -1012,7 +1035,9 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
           };
           
           // Register with Tauri backend
+          console.log(`Registering macro configuration:`, config);
           await registerMacro(config);
+          console.log(`Successfully registered macro: ${macroToActivate.id}`);
           
           // Update UI state
           newActiveMacros.add(macroToActivate.id);
@@ -1071,9 +1096,10 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       }
     } catch (err) {
       console.error("Error toggling macro:", err);
+      const errorMessage = err instanceof Error ? err.message : String(err) || 'Unknown error occurred';
       addToast({
         title: "Error",
-        description: `Failed to ${isActive ? "activate" : "deactivate"} macro: ${(err as Error).message}`,
+        description: `Failed to ${isActive ? "activate" : "deactivate"} macro: ${errorMessage}`,
         color: "danger"
       });
     }
@@ -1167,8 +1193,9 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
             };
             
             // Register with Tauri backend
+            console.log(`Registering replacement macro configuration:`, config);
             await registerMacro(config);
-            console.log(`Activated macro ${macroToActivate.id} directly`);
+            console.log(`Successfully registered replacement macro: ${macroToActivate.id}`);
             
             // Update tracking
             updatedActiveMacros.add(macroToActivate.id);
@@ -1227,6 +1254,8 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
           return ActionType.KeyCombination;
         }
         return ActionType.KeyPress;
+      case "keyrelease":
+        return ActionType.KeyRelease;
       case "mouseclick":
         return ActionType.MouseClick;
       case "mouserelease":
@@ -1253,16 +1282,33 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
           // For key combinations (key + modifiers), format as a keys array
           const keys = [...params.modifiers, params.key];
           console.log(`Creating key combination with keys:`, keys);
-          return { keys };
+          return { 
+            keys,
+            hold: params.hold || false  // Include hold parameter for combinations
+          };
         } else {
           // Simple key press without modifiers
-          return { key: params.key || "" };
+          return { 
+            key: params.key || "",
+            hold: params.hold || false  // Include hold parameter for simple keys
+          };
         }
+      case "keyrelease":
+        return { key: params.key || "" };
       case "mouseclick":
+        if (params.button === "scroll-up" || params.button === "scroll-down") {
+          return {
+            button: params.button,
+            amount: params.amount || 3,
+          };
+        } else {
         return {
           button: params.button || "left",
           hold: params.hold || false, // Pass hold parameter
+            x: params.x || 0,
+            y: params.y || 0,
         };
+        }
       case "mouserelease":
         return {
           button: params.button || "left",
@@ -1321,11 +1367,21 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   function getActionSummary(action: Action): string {
     switch (action.type) {
       case "keypress":
+        if (action.params.hold) {
+          return `Hold ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
+        } else {
         return `Press ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
-      case "keyhold":
-        return `Hold ${action.params.key} for ${action.params.duration}ms`;
+        }
+      case "keyrelease":
+        return `Release ${action.params.key}`;
       case "mouseclick":
-        return `${action.params.button} click${action.params.hold ? ' (hold)' : ''}`;
+        if (action.params.button === "scroll-up") {
+          return `Scroll up (amount: ${action.params.amount || 3})`;
+        } else if (action.params.button === "scroll-down") {
+          return `Scroll down (amount: ${action.params.amount || 3})`;
+        } else {
+          return `${action.params.button} click at (${action.params.x || 0}, ${action.params.y || 0})`;
+        }
       case "mouserelease":
         return `Release ${action.params.button} button`;
       case "mousemove":
@@ -1336,8 +1392,6 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         }
       case "mousedrag":
         return `Drag ${action.params.direction} by ${action.params.distance}px in ${action.params.duration}ms`;
-      case "mousescroll":
-        return `Scroll ${action.params.direction} at (${action.params.x}, ${action.params.y})`;
       case "delay":
         return `Wait for ${action.params.duration}ms`;
       default:
@@ -2171,18 +2225,99 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     setEditingCategory(null);
     setNewCategoryName("");
     setSelectedColor("primary");
+    setCustomColor("#3b82f6");
+    setIsCustomColor(false);
     setCategoryModalOpen(true);
+  };
+
+  const renderCategoryColor = (color: string) => {
+    // Check if it's a predefined color or custom hex
+    const presetColors = [
+      "red", "rose", "pink", "fuchsia", "purple",
+      "violet", "indigo", "blue", "sky", "cyan",
+      "teal", "emerald", "green", "lime", "yellow",
+      "amber", "orange", "coral", "salmon", "crimson"
+    ];
+    const isPresetColor = presetColors.includes(color);
+    
+    if (isPresetColor) {
+      return <div className={`category-color category-color-${color}`}></div>;
+    } else {
+      // Custom hex color
+      return (
+        <div 
+          className="category-color"
+          style={{ backgroundColor: color }}
+        ></div>
+      );
+    }
+  };
+
+  // Helper function to get category background styles
+  const getCategoryBackgroundStyle = (color: string) => {
+    const presetColors = [
+      "red", "rose", "pink", "fuchsia", "purple",
+      "violet", "indigo", "blue", "sky", "cyan",
+      "teal", "emerald", "green", "lime", "yellow",
+      "amber", "orange", "coral", "salmon", "crimson"
+    ];
+    const isPresetColor = presetColors.includes(color);
+    
+    if (isPresetColor) {
+      return {
+        className: `bg-${color}-50 hover:bg-${color}-100`,
+        style: {}
+      };
+    } else {
+      // For custom hex colors, convert to RGB and apply transparency
+      const hexToRgba = (hex: string, alpha: number) => {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        if (!result) return `rgba(59, 130, 246, ${alpha})`; // fallback to blue
+        const r = parseInt(result[1], 16);
+        const g = parseInt(result[2], 16);
+        const b = parseInt(result[3], 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      };
+      
+      return {
+        className: 'transition-colors duration-200 custom-category-bg',
+        style: {
+          backgroundColor: hexToRgba(color, 0.1),
+          '--hover-bg': hexToRgba(color, 0.2)
+        } as React.CSSProperties
+      };
+    }
   };
 
   const handleEditCategory = (category: MacroCategory) => {
     setEditingCategory(category);
     setNewCategoryName(category.name);
-    setSelectedColor(category.color);
+    
+    // Check if the color is a predefined color or custom
+    const presetColors = [
+      "red", "rose", "pink", "fuchsia", "purple",
+      "violet", "indigo", "blue", "sky", "cyan",
+      "teal", "emerald", "green", "lime", "yellow",
+      "amber", "orange", "coral", "salmon", "crimson"
+    ];
+    const isPresetColor = presetColors.includes(category.color);
+    
+    if (isPresetColor) {
+      setSelectedColor(category.color);
+      setIsCustomColor(false);
+    } else {
+      // It's a custom hex color
+      setCustomColor(category.color);
+      setIsCustomColor(true);
+    }
+    
     setCategoryModalOpen(true);
   };
 
   const handleSaveCategory = () => {
     if (!newCategoryName.trim()) return;
+
+    const finalColor = isCustomColor ? customColor : selectedColor;
 
     let updatedCategories: MacroCategory[];
 
@@ -2190,7 +2325,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       // Update existing category
       updatedCategories = categories.map(cat => 
         cat.id === editingCategory.id 
-          ? { ...cat, name: newCategoryName, color: selectedColor }
+          ? { ...cat, name: newCategoryName, color: finalColor }
           : cat
       );
     } else {
@@ -2198,7 +2333,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       const newCategory: MacroCategory = {
         id: crypto.randomUUID(),
         name: newCategoryName,
-        color: selectedColor,
+        color: finalColor,
         isExpanded: true
       };
       updatedCategories = [...categories, newCategory];
@@ -2207,6 +2342,13 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     setCategories(updatedCategories);
     localStorage.setItem("macroCategories", JSON.stringify(updatedCategories));
     setCategoryModalOpen(false);
+    
+    // Reset form
+    setEditingCategory(null);
+    setNewCategoryName("");
+    setSelectedColor("primary");
+    setCustomColor("#3b82f6");
+    setIsCustomColor(false);
     
     // Show success toast
     addToast({
@@ -2621,9 +2763,10 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
             <div key={category.id} id={`category-${category.id}`} className=" rounded-lg overflow-hidden border border-default-200 backdrop-blur-sm shadow-sm">
               {/* Category header - simplified drag target */}
               <div 
-                  className={`category-header z-30 relative flex justify-between items-center p-4 bg-${category.color}-50 hover:bg-${category.color}-100 transition-colors duration-200 ${
+                  className={`category-header z-30 relative flex justify-between items-center p-4 ${getCategoryBackgroundStyle(category.color).className} ${
                     dropTarget?.id === category.id && dropTarget?.type === 'category' ? 'drop-target' : ''
                   }`}
+                  style={getCategoryBackgroundStyle(category.color).style}
                   onDragOver={(e) => handleDragOver(e, {
                     id: category.id,
                     type: 'category',
@@ -2641,7 +2784,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                   className="flex-1 flex items-center gap-2 cursor-pointer"
                   onClick={() => toggleCategoryExpanded(category.id)}
                 >
-                  <div className={`category-color category-color-${category.color}`}></div>
+                  {renderCategoryColor(category.color)}
                   <h3 className="font-medium">{category.name}</h3>
                   <Chip size="sm" variant="flat" color={category.color as any}>
                     {macrosByCategory.counts[category.id]} macro{macrosByCategory.counts[category.id] !== 1 ? "s" : ""}
@@ -3004,9 +3147,10 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
             <div key={category.id} id={`category-${category.id}`} className="rounded-lg overflow-hidden border border-default-200 backdrop-blur-sm shadow-sm transition-all duration-500 ease-in-out">
               {/* Category header - simplified drag target */}
               <div 
-                className={`category-header flex justify-between items-center p-4 bg-${category.color}-50 hover:bg-${category.color}-100 transition-colors duration-200 ${
+                className={`category-header flex justify-between items-center p-4 ${getCategoryBackgroundStyle(category.color).className} ${
                   dropTarget?.id === category.id && dropTarget?.type === 'category' ? 'drop-target' : ''
                 }`}
+                style={getCategoryBackgroundStyle(category.color).style}
                 onDragOver={(e) => handleDragOver(e, {
                   id: category.id,
                   type: 'category',
@@ -3024,7 +3168,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                   className="flex-1 flex items-center gap-2 cursor-pointer"
                   onClick={() => toggleCategoryExpanded(category.id)}
                 >
-                  <div className={`category-color category-color-${category.color}`}></div>
+                  {renderCategoryColor(category.color)}
                   <h3 className="font-medium">{category.name}</h3>
                   <Chip size="sm" variant="flat" color={category.color as any}>
                     {macrosByCategory.counts[category.id]} macro{macrosByCategory.counts[category.id] !== 1 ? "s" : ""}
@@ -3362,23 +3506,67 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                 />
                 <div>
                   <p className="text-sm font-medium mb-2">Category Color</p>
-                  <div className="grid grid-cols-8 gap-3 max-h-[150px] overflow-y-auto p-2">
-                    {[
-                      "primary", "secondary", "warning", "danger", 
-                      "default", "purple", "pink", "red",
-                      "orange", "yellow", "green", "teal", 
-                      "blue", "indigo", "violet", "cyan"
-                    ].map(color => (
-                      <div 
-                        key={color}
-                        className={`category-color category-color-${color} cursor-pointer transition-transform ${
-                          selectedColor === color ? 'ring-2 ring-offset-2 ring-primary transform scale-125' : 'hover:scale-110'
-                        }`}
-                        onClick={() => setSelectedColor(color)}
-                        title={color}
-                      />
-                    ))}
+                  
+                  {/* Color type selector */}
+                  <div className="flex gap-2 mb-4">
+                    <Button
+                      size="sm"
+                      variant={!isCustomColor ? "solid" : "bordered"}
+                      color={!isCustomColor ? "primary" : "default"}
+                      onPress={() => setIsCustomColor(false)}
+                    >
+                      Preset Colors
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={isCustomColor ? "solid" : "bordered"}
+                      color={isCustomColor ? "primary" : "default"}
+                      onPress={() => setIsCustomColor(true)}
+                    >
+                      Custom Color
+                    </Button>
                   </div>
+
+                  {!isCustomColor ? (
+                    // Preset colors grid
+                    <div className="grid grid-cols-10 gap-2 max-h-[200px] overflow-y-auto p-2">
+                      {[
+                        "red", "rose", "pink", "fuchsia", "purple",
+                        "violet", "indigo", "blue", "sky", "cyan",
+                        "teal", "emerald", "green", "lime", "yellow",
+                        "amber", "orange", "coral", "salmon", "crimson"
+                      ].map(color => (
+                        <div 
+                          key={color}
+                          className={`category-color category-color-${color} cursor-pointer transition-transform ${
+                            selectedColor === color ? 'ring-2 ring-offset-2 ring-primary transform scale-125' : 'hover:scale-110'
+                          }`}
+                          onClick={() => setSelectedColor(color)}
+                          title={color}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    // Custom color picker
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="color"
+                          value={customColor}
+                          onChange={(e) => setCustomColor(e.target.value)}
+                          className="w-12 h-12 rounded-full border-2 border-white cursor-pointer"
+                        />
+                        <Input
+                          label="Hex Color"
+                          value={customColor}
+                          onValueChange={setCustomColor}
+                          placeholder="#3b82f6"
+                          className="flex-1"
+                        />
+                      </div>
+                     
+                    </div>
+                  )}
                 </div>
               </ModalBody>
               <ModalFooter>

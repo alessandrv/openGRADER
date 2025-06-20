@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Button, Input, Card,  CardBody, Divider, Chip, Accordion, AccordionItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, addToast } from "@heroui/react";
 import { Icon } from "@iconify/react";
-import { DragDropContext, Droppable, Draggable } from "react-beautiful-dnd";
+import DraggableList from "react-draggable-list";
 import { ActionEditor } from "./action-editor";
 import { MidiTriggerSelector } from "./midi-trigger-selector";
 import { MacroTypeSelector } from "./macro-type-selector";
 import { Action, MacroDefinition, MacroCategory } from "../types/macro";
+import { useSettings } from "../hooks/use-settings";
 
 interface MacroBuilderProps {
   macroToEdit?: MacroDefinition | null;
@@ -14,6 +15,7 @@ interface MacroBuilderProps {
 }
 
 export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditComplete, onNewMacroCreated }) => {
+  const { settings } = useSettings();
   const [macroName, setMacroName] = useState("");
   const [actions, setActions] = useState<Action[]>([]);
   const [beforeActions, setBeforeActions] = useState<Action[]>([]);
@@ -60,6 +62,13 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
       }
     }
   }, []);
+
+  // Update default timeout when settings change
+  useEffect(() => {
+    if (!macroToEdit) {
+      setSharedTimeout(settings.defaultTimeout);
+    }
+  }, [settings.defaultTimeout, macroToEdit]);
 
   useEffect(() => {
     if (macroToEdit) {
@@ -229,11 +238,11 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
   const getDefaultParamsForType = (type: string): Record<string, any> => {
     switch (type) {
       case "keypress":
-        return { key: "", modifiers: [] };
-      case "keyhold":
-        return { key: "", duration: 500, modifiers: [] };
+        return { key: "", modifiers: [], hold: false, duration: 500 };
+      case "keyrelease":
+        return { key: "" };
       case "mouseclick":
-        return { button: "left", hold: false };
+        return { button: "left", hold: false, x: 0, y: 0 };
       case "mouserelease":
         return { button: "left" };
       case "mousemove":
@@ -242,13 +251,9 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
           y: 0,
           relative: false,
           direction: "right", 
-          distance: 100,
+          distance: 10,
           duration: 500 
         };
-      case "mousedrag":
-        return { button: "left", direction: "right", distance: 100, duration: 500 };
-      case "mousescroll":
-        return { x: 0, y: 0, amount: 100, direction: "down" };
       case "delay":
         return { duration: 500 };
       default:
@@ -322,34 +327,17 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
     }
   };
 
-  const handleDragEnd = (result: any, section: string = "main") => {
-    if (!result.destination) return;
-    
+  const handleOrderChange = (newList: Action[], section: string = "main") => {
     if (section === "before") {
-      const items = Array.from(beforeActions);
-      const [reorderedItem] = items.splice(result.source.index, 1);
-      items.splice(result.destination.index, 0, reorderedItem);
-      setBeforeActions(items);
+      setBeforeActions(newList);
     } else if (section === "after") {
-      const items = Array.from(afterActions);
-      const [reorderedItem] = items.splice(result.source.index, 1);
-      items.splice(result.destination.index, 0, reorderedItem);
-      setAfterActions(items);
+      setAfterActions(newList);
     } else if (section === "decrement") {
-      const items = Array.from(decrementActions);
-      const [reorderedItem] = items.splice(result.source.index, 1);
-      items.splice(result.destination.index, 0, reorderedItem);
-      setDecrementActions(items);
+      setDecrementActions(newList);
     } else if (section === "click") {
-      const items = Array.from(clickActions);
-      const [reorderedItem] = items.splice(result.source.index, 1);
-      items.splice(result.destination.index, 0, reorderedItem);
-      setClickActions(items);
+      setClickActions(newList);
     } else {
-      const items = Array.from(actions);
-      const [reorderedItem] = items.splice(result.source.index, 1);
-      items.splice(result.destination.index, 0, reorderedItem);
-      setActions(items);
+      setActions(newList);
     }
   };
 
@@ -515,111 +503,129 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
     }
 
     return (
-      <DragDropContext onDragEnd={(result) => handleDragEnd(result, section)}>
-        <Droppable droppableId={`actions-${section}`}>
-          {(provided) => (
-            <div
-              {...provided.droppableProps}
-              ref={provided.innerRef}
-              className="space-y-2"
-            >
-              {actionsList.map((action, index) => (
-                <Draggable key={action.id} draggableId={action.id} index={index}>
-                  {(provided) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.draggableProps}
-                      {...provided.dragHandleProps}
-                    >
-                      {isEditing?.section === section && isEditing.index === index ? (
-                        <ActionEditor
-                          action={action}
-                          onSave={(updatedAction) => handleUpdateAction(index, updatedAction, section)}
-                          onCancel={handleCancelEdit}
-                        />
-                      ) : (
-                        <Card className="p-3">
-                          <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                              <div className="bg-default-100 p-1 rounded-full">
-                                <Icon icon="lucide:grip" className="text-default-500" />
-                              </div>
-                              <div>
-                                <span className="font-medium capitalize">{action.type}</span>
-                                <p className="text-xs text-foreground-500">
-                                  {getActionSummary(action)}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex gap-1">
-                              <Button
-                                isIconOnly
-                                size="sm"
-                                variant="light"
-                                onPress={() => setIsEditing({section, index})}
-                              >
-                                <Icon icon="lucide:edit" className="text-default-500" />
-                              </Button>
-                              <Button
-                                isIconOnly
-                                size="sm"
-                                variant="light"
-                                color="danger"
-                                onPress={() => handleDeleteAction(index, section)}
-                              >
-                                <Icon icon="lucide:trash-2" className="text-danger" />
-                              </Button>
-                            </div>
-                          </div>
-                        </Card>
-                      )}
-                    </div>
-                  )}
-                </Draggable>
-              ))}
-              {provided.placeholder}
-            </div>
-          )}
-        </Droppable>
-      </DragDropContext>
+      <div className="space-y-2">
+        <DraggableList
+          list={actionsList}
+          itemKey="id"
+          template={ActionItem}
+          onMoveEnd={(newList: readonly unknown[]) => handleOrderChange([...(newList as Action[])], section)}
+          container={() => document.body}
+          commonProps={{
+            section,
+            isEditing,
+            setIsEditing,
+            handleUpdateAction,
+            handleDeleteAction,
+            handleCancelEdit,
+            getActionTypeDisplayName,
+            getActionSummary
+          }}
+        />
+      </div>
     );
   };
 
   const renderActionButtons = (section: string) => {
     return (
       <div className="flex gap-2 mt-4">
-        <Button size="sm" variant="flat" onPress={() => handleAddAction("keypress", section)}>
-          + Key Press
-        </Button>
-        <Button size="sm" variant="flat" onPress={() => handleAddAction("mouseclick", section)}>
-          + Mouse Click
-        </Button>
-        <Button size="sm" variant="flat" onPress={() => handleAddAction("delay", section)}>
-          + Delay
-        </Button>
-        
-        {/* Use HeroUI Dropdown instead of custom hover solution */}
+        {/* Key Dropdown */}
         <Dropdown>
           <DropdownTrigger>
             <Button size="sm" variant="flat" endContent={<Icon icon="lucide:chevron-down" className="text-foreground-500" />}>
-              + More
+              + Key
+        </Button>
+          </DropdownTrigger>
+          <DropdownMenu 
+            aria-label="Key action types"
+            className="z-50"
+          >
+            <DropdownItem key="keypress" onPress={() => handleAddAction("keypress", section)}>
+              Key Press
+            </DropdownItem>
+            <DropdownItem key="keyrelease" onPress={() => handleAddAction("keyrelease", section)}>
+              Key Release
+            </DropdownItem>
+          </DropdownMenu>
+        </Dropdown>
+        
+        {/* Mouse Dropdown */}
+        <Dropdown>
+          <DropdownTrigger>
+            <Button size="sm" variant="flat" endContent={<Icon icon="lucide:chevron-down" className="text-foreground-500" />}>
+              + Mouse
             </Button>
           </DropdownTrigger>
           <DropdownMenu 
-            aria-label="Action types"
+            aria-label="Mouse action types"
             className="z-50"
           >
+            <DropdownItem key="mouseclick" onPress={() => handleAddAction("mouseclick", section)}>
+              Mouse Click
+            </DropdownItem>
             <DropdownItem key="mousemove" onPress={() => handleAddAction("mousemove", section)}>
               Mouse Move
-            </DropdownItem>
-            <DropdownItem key="keyhold" onPress={() => handleAddAction("keyhold", section)}>
-              Key Hold
             </DropdownItem>
             <DropdownItem key="mouserelease" onPress={() => handleAddAction("mouserelease", section)}>
               Mouse Release
             </DropdownItem>
+            <DropdownItem key="scroll-up" onPress={() => {
+              const scrollUpAction: Action = {
+                id: crypto.randomUUID(),
+                type: "mouseclick",
+                params: { button: "scroll-up", amount: 3 },
+              };
+              
+              if (section === "before") {
+                setBeforeActions([...beforeActions, scrollUpAction]);
+                setIsEditing({section: "before", index: beforeActions.length});
+              } else if (section === "after") {
+                setAfterActions([...afterActions, scrollUpAction]);
+                setIsEditing({section: "after", index: afterActions.length});
+              } else if (section === "decrement") {
+                setDecrementActions([...decrementActions, scrollUpAction]);
+                setIsEditing({section: "decrement", index: decrementActions.length});
+              } else if (section === "click") {
+                setClickActions([...clickActions, scrollUpAction]);
+                setIsEditing({section: "click", index: clickActions.length});
+              } else {
+                setActions([...actions, scrollUpAction]);
+                setIsEditing({section: "main", index: actions.length});
+              }
+            }}>
+              Scroll Up
+            </DropdownItem>
+            <DropdownItem key="scroll-down" onPress={() => {
+              const scrollDownAction: Action = {
+                id: crypto.randomUUID(),
+                type: "mouseclick",
+                params: { button: "scroll-down", amount: 3 },
+              };
+              
+              if (section === "before") {
+                setBeforeActions([...beforeActions, scrollDownAction]);
+                setIsEditing({section: "before", index: beforeActions.length});
+              } else if (section === "after") {
+                setAfterActions([...afterActions, scrollDownAction]);
+                setIsEditing({section: "after", index: afterActions.length});
+              } else if (section === "decrement") {
+                setDecrementActions([...decrementActions, scrollDownAction]);
+                setIsEditing({section: "decrement", index: decrementActions.length});
+              } else if (section === "click") {
+                setClickActions([...clickActions, scrollDownAction]);
+                setIsEditing({section: "click", index: clickActions.length});
+              } else {
+                setActions([...actions, scrollDownAction]);
+                setIsEditing({section: "main", index: actions.length});
+              }
+            }}>
+              Scroll Down
+            </DropdownItem>
           </DropdownMenu>
         </Dropdown>
+        
+        <Button size="sm" variant="flat" onPress={() => handleAddAction("delay", section)}>
+          + Delay
+        </Button>
       </div>
     );
   };
@@ -843,8 +849,8 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
                 </Card>
               </AccordionItem>
               
-              {/* Render conditional sections only if they should be shown */}
-              {macroType !== "standard" && 
+              {/* Conditional sections */}
+              {macroType !== "standard" ? (
                 <AccordionItem 
                   key="decrement" 
                   aria-label="Decrement Actions" 
@@ -864,9 +870,9 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
                     </CardBody>
                   </Card>
                 </AccordionItem>
-              }
+              ) : null}
               
-              {macroType === "encoder-click" && 
+              {macroType === "encoder-click" ? (
                 <AccordionItem 
                   key="click" 
                   aria-label="Click Actions" 
@@ -886,7 +892,7 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
                     </CardBody>
                   </Card>
                 </AccordionItem>
-              }
+              ) : null}
               
               {/* After Actions Section */}
               <AccordionItem 
@@ -963,28 +969,155 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
   );
 };
 
+// Helper function to convert action type to readable display name
+function getActionTypeDisplayName(actionType: string): string {
+  switch (actionType) {
+    case "keypress":
+      return "Key Press";
+    case "keyrelease":
+      return "Key Release";
+    case "mouseclick":
+      return "Mouse Click";
+    case "mouserelease":
+      return "Mouse Release";
+    case "mousemove":
+      return "Mouse Move";
+    case "delay":
+      return "Delay";
+    default:
+      return actionType.charAt(0).toUpperCase() + actionType.slice(1);
+  }
+}
+
 // Helper function to generate a summary of the action
 function getActionSummary(action: Action): string {
   switch (action.type) {
     case "keypress":
+      if (action.params.hold) {
+        return `Hold ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
+      } else {
       return `Press ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
-    case "keyhold":
-      return `Hold ${action.params.key} for ${action.params.duration}ms`;
+      }
+    case "keyrelease":
+      return `Release ${action.params.key}`;
     case "mouseclick":
-      return `${action.params.button} click at (${action.params.x}, ${action.params.y})`;
+    if (action.params.button === "scroll-up") {
+        return `Scroll up (amount: ${action.params.amount || 3})`;
+      } else if (action.params.button === "scroll-down") {
+        return `Scroll down (amount: ${action.params.amount || 3})`;
+      } else if (action.params.button === "scroll-left") {
+        return `Scroll left (amount: ${action.params.amount || 3})`;
+      } else if (action.params.button === "scroll-right") {
+        return `Scroll right (amount: ${action.params.amount || 3})`;
+      } else {
+        return `${action.params.button.charAt(0).toUpperCase() + action.params.button.slice(1)} click${action.params.hold ? ' (hold)' : ''}`;
+      }
+      case "mouserelease":
+        return `${action.params.button} release`;
+      
     case "mousemove":
       if (action.params.relative) {
-        return `Move ${action.params.direction || 'right'} by ${action.params.distance || 100}px in ${action.params.duration}ms`;
+        return `Move ${action.params.direction || 'right'} by ${action.params.distance || 100}px`;
       } else {
-        return `Move to (${action.params.x}, ${action.params.y}) in ${action.params.duration}ms`;
+        return `Move to (${action.params.x}, ${action.params.y})`;
       }
-    case "mousedrag":
-      return `Drag ${action.params.direction} from (${action.params.startX}, ${action.params.startY}) - ${action.params.distance}px at ${action.params.speed}px/s`;
-    case "mousescroll":
-      return `Scroll ${action.params.direction} at (${action.params.x}, ${action.params.y})`;
     case "delay":
       return `Wait for ${action.params.duration}ms`;
     default:
       return "Unknown action";
+  }
+}
+
+// ActionItem component for draggable actions
+interface ActionItemProps {
+  item: Action;
+  itemSelected: number;
+  dragHandleProps: object;
+  commonProps: {
+    section: string;
+    isEditing: {section: string, index: number} | null;
+    setIsEditing: React.Dispatch<React.SetStateAction<{section: string, index: number} | null>>;
+    handleUpdateAction: (index: number, updatedAction: Action, section: string) => void;
+    handleDeleteAction: (index: number, section: string) => void;
+    handleCancelEdit: () => void;
+    getActionTypeDisplayName: (actionType: string) => string;
+    getActionSummary: (action: Action) => string;
+  };
+}
+
+class ActionItem extends React.Component<ActionItemProps> {
+  getDragHeight() {
+    return 80; // Approximate height of action item
+  }
+
+  render() {
+    const { item: action, itemSelected, dragHandleProps, commonProps } = this.props;
+    const { 
+      section, 
+      isEditing, 
+      setIsEditing, 
+      handleUpdateAction, 
+      handleDeleteAction, 
+      handleCancelEdit,
+      getActionTypeDisplayName,
+      getActionSummary
+    } = commonProps;
+
+    // Find the index of this action in the appropriate list
+    const index = itemSelected;
+    
+    // Check if this action is currently being edited
+    const isCurrentlyEditing = isEditing?.section === section && isEditing.index === index;
+
+    return (
+      <div className="mb-2">
+        {isCurrentlyEditing ? (
+          // When editing, don't apply drag props to prevent unwanted dragging
+          <ActionEditor
+            action={action}
+            onSave={(updatedAction) => handleUpdateAction(index, updatedAction, section)}
+            onCancel={handleCancelEdit}
+          />
+        ) : (
+          // Only apply drag props when not editing
+          <div {...dragHandleProps}>
+            <Card className="p-3">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="bg-default-100 p-1 rounded-full cursor-move">
+                    <Icon icon="lucide:grip" className="text-default-500" />
+                  </div>
+                  <div>
+                    <span className="font-medium">{getActionTypeDisplayName(action.type)}</span>
+                    <p className="text-xs text-foreground-500">
+                      {getActionSummary(action)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    onPress={() => setIsEditing({section, index})}
+                  >
+                    <Icon icon="lucide:edit" className="text-default-500" />
+                  </Button>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    color="danger"
+                    onPress={() => handleDeleteAction(index, section)}
+                  >
+                    <Icon icon="lucide:trash-2" className="text-danger" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+    );
   }
 }

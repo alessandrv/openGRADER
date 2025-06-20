@@ -539,9 +539,13 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
   const getActionSummary = (action: Action): string => {
     switch (action.type) {
       case "keypress":
+      if (action.params.hold) {
+        return `Hold ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
+      } else {
         return `Press ${action.params.key}${action.params.modifiers?.length ? ` with ${action.params.modifiers.join('+')}` : ''}`;
-      case "keyhold":
-        return `Hold ${action.params.key} for ${action.params.duration}ms`;
+      }
+    case "keyrelease":
+      return `Release ${action.params.key}`;
       case "mouseclick":
         return `${action.params.button} click${action.params.hold ? ' (hold)' : ''}`;
       case "mouserelease":
@@ -564,7 +568,7 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
   // Modify renderParamInput to add the coordinate capture button for mouse coordinates
   const renderParamInput = (action: Action, paramName: string, fieldKey: string) => {
     // Special handling for mouse coordinates
-    if ((action.type === "mousemove" || action.type === "mousescroll") && 
+                if ((action.type === "mousemove" || (action.type === "mouseclick" && action.params.button?.startsWith("scroll"))) && 
         (paramName === "x" || paramName === "y")) {
       
       // For x/y coordinates, show them as a pair with a capture button

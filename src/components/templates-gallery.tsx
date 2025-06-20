@@ -337,6 +337,120 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
     const category = categories.find(c => c.id === categoryId);
     return category ? category.color : "default";
   };
+
+  // Helper function to check if a color is a preset color or custom hex
+  const isPresetColor = (color: string): boolean => {
+    const presetColors = [
+      "red", "rose", "pink", "fuchsia", "purple",
+      "violet", "indigo", "blue", "sky", "cyan",
+      "teal", "emerald", "green", "lime", "yellow",
+      "amber", "orange", "coral", "salmon", "crimson",
+      "default", "primary", "secondary", "warning", "danger"
+    ];
+    return presetColors.includes(color);
+  };
+
+  // Helper function to convert hex to rgba
+  const hexToRgba = (hex: string, alpha: number): string => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    if (result) {
+      const r = parseInt(result[1], 16);
+      const g = parseInt(result[2], 16);
+      const b = parseInt(result[3], 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    return `rgba(59, 130, 246, ${alpha})`; // fallback to blue
+  };
+
+  // Helper function to get background style for template cards
+  const getTemplateBackgroundStyle = (color: string) => {
+    if (isPresetColor(color)) {
+      return {
+        className: `bg-${color}-50`,
+        style: {}
+      };
+    } else {
+      // Custom hex color
+      return {
+        className: 'transition-colors duration-200',
+        style: {
+          backgroundColor: hexToRgba(color, 0.1)
+        }
+      };
+    }
+  };
+
+  // Helper function to get icon background style
+  const getIconBackgroundStyle = (color: string, isHover: boolean = false) => {
+    if (isPresetColor(color)) {
+      return {
+        className: `bg-${color}-100 group-hover:bg-${color}-200`,
+        style: {}
+      };
+    } else {
+      // Custom hex color
+      return {
+        className: 'transition-colors duration-200',
+        style: {
+          backgroundColor: isHover ? hexToRgba(color, 0.3) : hexToRgba(color, 0.2)
+        }
+      };
+    }
+  };
+
+  // Helper function to get icon color style
+  const getIconColorStyle = (color: string) => {
+    if (isPresetColor(color)) {
+      return {
+        className: `text-${color}`,
+        style: {}
+      };
+    } else {
+      // Custom hex color
+      return {
+        className: '',
+        style: {
+          color: color
+        }
+      };
+    }
+  };
+
+  // Helper function to get chip color
+  const getChipColor = (color: string): "default" | "primary" | "secondary" | "success" | "warning" | "danger" => {
+    if (isPresetColor(color)) {
+      // Map preset colors to valid chip colors
+      switch (color) {
+        case "red":
+        case "rose":
+        case "pink":
+        case "crimson":
+          return "danger";
+        case "orange":
+        case "amber":
+        case "yellow":
+          return "warning";
+        case "green":
+        case "emerald":
+        case "lime":
+        case "teal":
+          return "success";
+        case "blue":
+        case "sky":
+        case "cyan":
+        case "indigo":
+        case "violet":
+        case "purple":
+        case "fuchsia":
+          return "primary";
+        default:
+          return "default";
+      }
+    } else {
+      // For custom colors, use default chip and custom styling
+      return "default";
+    }
+  };
   
   const getTemplateTypeIcon = (type: string): string => {
     switch (type) {
@@ -401,9 +515,12 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
   };
   
   // Method to handle action buttons in the template card
-  const handleTemplateAction = (e: React.MouseEvent, action: 'edit' | 'delete', template: MacroTemplate) => {
+  const handleTemplateAction = (e: React.MouseEvent | null, action: 'edit' | 'delete', template: MacroTemplate) => {
     // Stop event propagation to prevent toggling selection when clicking action buttons
-    e.stopPropagation();
+    // Only call stopPropagation if the event exists and has the method
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
     
     if (action === 'edit') {
       handleEditTemplateClick(template);
@@ -609,6 +726,10 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         {templates.map((template: MacroTemplate) => {
           const categoryColor = getCategoryColor(template.categoryId);
           const isSelected = selectedTemplates.has(template.id);
+          const backgroundStyle = getTemplateBackgroundStyle(categoryColor);
+          const iconBackgroundStyle = getIconBackgroundStyle(categoryColor);
+          const iconColorStyle = getIconColorStyle(categoryColor);
+          const chipColor = getChipColor(categoryColor);
           
           return (
             <Card 
@@ -623,8 +744,9 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                     : 'opacity-80 hover:opacity-100' 
                   : 'hover:shadow-lg hover:border-primary/30 hover:scale-[1.01] transform'
                 } 
-                 bg-${categoryColor}-50 flex flex-col p-4 group
+                ${backgroundStyle.className} flex flex-col p-4 group
               `}
+              style={backgroundStyle.style}
               onPress={() => {
                 if (showExportSelection) {
                   toggleTemplateSelection(template.id);
@@ -635,14 +757,26 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
             >
               <div className="flex justify-between items-center mb-3">
                 <div className="flex items-center gap-2">
-                  <div className={`p-2 rounded-md bg-${categoryColor}-100 group-hover:bg-${categoryColor}-200 transition-colors`}>
-                    <Icon icon={getTemplateTypeIcon(template.type)} className={`text-${categoryColor} text-xl`} />
+                  <div 
+                    className={`p-2 rounded-md ${iconBackgroundStyle.className}`}
+                    style={iconBackgroundStyle.style}
+                  >
+                    <Icon 
+                      icon={getTemplateTypeIcon(template.type)} 
+                      className={`text-xl ${iconColorStyle.className}`}
+                      style={iconColorStyle.style}
+                    />
                   </div>
                   
                   <Chip 
                     size="sm" 
                     variant="flat"
-                    color={categoryColor as any}
+                    color={chipColor}
+                    style={!isPresetColor(categoryColor) ? { 
+                      backgroundColor: hexToRgba(categoryColor, 0.15),
+                      color: categoryColor,
+                      borderColor: hexToRgba(categoryColor, 0.3)
+                    } : {}}
                   >
                     {getTemplateTypeLabel(template.type)}
                   </Chip>
@@ -651,107 +785,120 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                 <div className="flex gap-1">
                   {!showExportSelection && (
                     <>
-                      <Dropdown>
-                        <DropdownTrigger>
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            color="default"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Icon icon="lucide:more-vertical" className="text-foreground-500" />
-                          </Button>
-                        </DropdownTrigger>
-                        <DropdownMenu aria-label="Template actions" variant="flat">
-                          <DropdownItem
-                            key="use"
-                            description="Apply this template to create a macro"
-                            startContent={<Icon icon="lucide:play" className="text-primary" />}
-                            onPress={() => handleSelectTemplate(template)}
-                          >
-                            Use Template
-                          </DropdownItem>
-                          
-                          {template.type.includes("encoder") ? (
-                            <DropdownItem
-                              key="bulk-init"
-                              description="Create multiple encoder groups at once"
-                              startContent={<Icon icon="lucide:layers" className="text-secondary" />}
-                              onPress={() => handleBulkInitialize(template)}
+                      <div className="relative">
+                        <Dropdown>
+                          <DropdownTrigger>
+                            <Button
+                              isIconOnly
+                              size="sm"
+                              variant="light"
+                              color="default"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              Bulk Initialize
+                              <Icon icon="lucide:more-vertical" className="text-foreground-500" />
+                            </Button>
+                          </DropdownTrigger>
+                          <DropdownMenu aria-label="Template actions" variant="flat">
+                            <DropdownItem
+                              key="use"
+                              description="Apply this template to create a macro"
+                              startContent={<Icon icon="lucide:play" className="text-primary" />}
+                              onPress={() => handleSelectTemplate(template)}
+                            >
+                              Use Template
                             </DropdownItem>
-                          ) : null}
-                          
-                          <DropdownItem
-                            key="edit"
-                            description="Edit this template"
-                            startContent={<Icon icon="lucide:edit" className="text-warning" />}
-                            onPress={() => handleTemplateAction({} as React.MouseEvent, 'edit', template)}
-                          >
-                            Edit Template
-                          </DropdownItem>
-                          
-                          <DropdownItem
-                            key="delete"
-                            description="Delete this template"
-                            color="danger"
-                            startContent={<Icon icon="lucide:trash-2" className="text-danger" />}
-                            onPress={() => setDeletePopoverOpen(template.id)}
-                          >
-                            Delete Template
-                          </DropdownItem>
-                        </DropdownMenu>
-                      </Dropdown>
-                      
-                      <Popover 
-                        isOpen={deletePopoverOpen === template.id} 
-                        onOpenChange={(open) => {
-                          if (open) {
-                            setDeletePopoverOpen(template.id);
-                          } else {
-                            setDeletePopoverOpen(null);
-                          }
-                        }}
-                        backdrop="blur"
-                        placement="top"
-                      >
-                        <PopoverTrigger>
-                          <div style={{ display: 'none' }} />
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[240px]">
-                          <div className="px-1 py-2 w-full">
-                            <p className="text-small font-bold text-foreground">
+                            
+                            {template.type.includes("encoder") ? (
+                              <DropdownItem
+                                key="bulk-init"
+                                description="Create multiple encoder groups at once"
+                                startContent={<Icon icon="lucide:layers" className="text-secondary" />}
+                                onPress={() => handleBulkInitialize(template)}
+                              >
+                                Bulk Initialize
+                              </DropdownItem>
+                            ) : null}
+                            
+                            <DropdownItem
+                              key="edit"
+                              description="Edit this template"
+                              startContent={<Icon icon="lucide:edit" className="text-warning" />}
+                              onPress={() => handleTemplateAction(null, 'edit', template)}
+                            >
+                              Edit Template
+                            </DropdownItem>
+                            
+                            <DropdownItem
+                              key="delete"
+                              description="Delete this template"
+                              color="danger"
+                              startContent={<Icon icon="lucide:trash-2" className="text-danger" />}
+                              onPress={() => setDeletePopoverOpen(template.id)}
+                            >
                               Delete Template
-                            </p>
-                            <div className="mt-2">
-                              <p className="text-small text-default-500">
-                                Are you sure you want to delete "{template.name}"? This action cannot be undone.
-                              </p>
+                            </DropdownItem>
+                          </DropdownMenu>
+                        </Dropdown>
+                        
+                        {/* Delete confirmation popover */}
+                        <Popover 
+                          isOpen={deletePopoverOpen === template.id} 
+                          onOpenChange={(open) => {
+                            if (!open) {
+                              setDeletePopoverOpen(null);
+                            }
+                          }}
+                          backdrop="opaque"
+                          placement="bottom-end"
+                          offset={8}
+                          crossOffset={0}
+                          shouldBlockScroll={false}
+                        >
+                          <PopoverTrigger>
+                            <div 
+                              className="absolute inset-0 pointer-events-none"
+                              style={{ 
+                                visibility: deletePopoverOpen === template.id ? 'visible' : 'hidden' 
+                              }}
+                            />
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[280px]">
+                            <div className="px-3 py-3 w-full">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Icon icon="lucide:alert-triangle" className="text-danger text-lg" />
+                                <p className="text-small font-bold text-foreground">
+                                  Delete Template
+                                </p>
+                              </div>
+                              <div className="mb-4">
+                                <p className="text-small text-default-500">
+                                  Are you sure you want to delete <strong>"{template.name}"</strong>? This action cannot be undone.
+                                </p>
+                              </div>
+                              <div className="flex justify-end gap-2">
+                                <Button 
+                                  size="sm" 
+                                  variant="flat"
+                                  onPress={() => setDeletePopoverOpen(null)}
+                                >
+                                  Cancel
+                                </Button>                                
+                                <Button 
+                                  size="sm"
+                                  color="danger"
+                                  variant="solid"
+                                  onPress={() => {
+                                    handleConfirmDelete(template.id);
+                                    setDeletePopoverOpen(null);
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </div>
                             </div>
-                            <div className="mt-4 flex justify-end gap-2">
-                              <Button 
-                                size="sm" 
-                                variant="flat"
-                                onPress={() => setDeletePopoverOpen(null)}
-                              >
-                                Cancel
-                              </Button>                                
-                              <Button 
-                                size="sm"
-                                color="danger"
-                                onPress={() => {
-                                  handleConfirmDelete(template.id);
-                                  setDeletePopoverOpen(null);
-                                }}
-                              >
-                                Delete
-                              </Button>
-                            </div>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
                     </>
                   )}
                   {showExportSelection && isSelected && (
@@ -795,33 +942,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                   <div className="absolute bottom-3 -left-3 w-4 h-4 rounded-full bg-secondary/30"></div>
                 </div>
                 
-                <div className="max-w-lg text-center sm:text-left">
-                  <h3 className="text-2xl font-medium mb-3 text-foreground">No Templates Available</h3>
-                  <p className="text-foreground-500 mb-6 leading-relaxed">
-                    Templates help you quickly create consistent macros. Start by creating a macro, then convert it to a reusable template.
-                  </p>
-                  
-                  <div className="flex flex-col sm:flex-row gap-3 items-center">
-                    <Button 
-                      color="primary"
-                      className="rounded-full px-6 font-medium"
-                      startContent={<Icon icon="lucide:plus" />}
-                      onPress={onCreateNewMacro}
-                    >
-                      Create Your First Macro
-                    </Button>
-                    
-                    <Button
-                      variant="flat"
-                      color="default"
-                      className="rounded-full"
-                      onPress={handleImportClick}
-                      startContent={<Icon icon="lucide:download" />}
-                    >
-                      Import Templates
-                    </Button>
-                  </div>
-                </div>
+             
               </div>
             </Card>
           </div>

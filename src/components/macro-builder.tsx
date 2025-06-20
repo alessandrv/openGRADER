@@ -518,7 +518,8 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
             handleDeleteAction,
             handleCancelEdit,
             getActionTypeDisplayName,
-            getActionSummary
+            getActionSummary,
+            actionsList
           }}
         />
       </div>
@@ -1042,6 +1043,7 @@ interface ActionItemProps {
     handleCancelEdit: () => void;
     getActionTypeDisplayName: (actionType: string) => string;
     getActionSummary: (action: Action) => string;
+    actionsList: Action[];
   };
 }
 
@@ -1060,11 +1062,12 @@ class ActionItem extends React.Component<ActionItemProps> {
       handleDeleteAction, 
       handleCancelEdit,
       getActionTypeDisplayName,
-      getActionSummary
+      getActionSummary,
+      actionsList
     } = commonProps;
 
-    // Find the index of this action in the appropriate list
-    const index = itemSelected;
+    // Find the actual index of this action in the appropriate list by its ID
+    const index = actionsList.findIndex((a: Action) => a.id === action.id);
     
     // Check if this action is currently being edited
     const isCurrentlyEditing = isEditing?.section === section && isEditing.index === index;

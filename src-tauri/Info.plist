@@ -16,5 +16,11 @@
     <string>openGRADER needs to control your computer using accessibility features to automate actions.</string>
     <key>NSAccessibilityUsageDescription</key>
     <string>openGRADER needs accessibility permissions to automate mouse and keyboard actions.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>openGRADER needs Bluetooth access to connect to MIDI devices.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>openGRADER needs Bluetooth access to connect to MIDI devices.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>openGRADER may need microphone access for audio-related MIDI functionality.</string>
 </dict>
 </plist> 

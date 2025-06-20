@@ -526,7 +526,13 @@ fn cancel_macro(id: String) -> Result<(), String> {
 // Command to list MIDI inputs
 #[tauri::command]
 fn list_midi_inputs_rust() -> Result<Vec<String>, String> {
-    let midi_in = MidiInput::new("opengrader-midi-input").map_err(|e| e.to_string())?;
+    let midi_in = MidiInput::new("opengrader-midi-input").map_err(|e| {
+        #[cfg(target_os = "macos")]
+        return format!("Failed to initialize MIDI on macOS: {}. Please ensure your app has the necessary permissions in System Preferences > Security & Privacy > Privacy > Microphone and Bluetooth.", e);
+        
+        #[cfg(not(target_os = "macos"))]
+        return e.to_string();
+    })?;
     
     let ports = midi_in.ports();
     let mut port_names = Vec::new();
@@ -562,7 +568,13 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
     let port_name = ports_guard[port_index].0.clone();
     drop(ports_guard); // Release lock
     
-    let midi_in = MidiInput::new("opengrader-midi-listener").map_err(|e| e.to_string())?;
+    let midi_in = MidiInput::new("opengrader-midi-listener").map_err(|e| {
+        #[cfg(target_os = "macos")]
+        return format!("Failed to create MIDI listener on macOS: {}. Please ensure your app has the necessary permissions in System Preferences > Security & Privacy > Privacy > Microphone and Bluetooth.", e);
+        
+        #[cfg(not(target_os = "macos"))]
+        return e.to_string();
+    })?;
     let ports = midi_in.ports();
     if port_index >= ports.len() {
         return Err(format!("Port index {} out of range. Only {} ports available.", port_index, ports.len()));
@@ -1094,7 +1106,13 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
             }
         }
     }, ())
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        #[cfg(target_os = "macos")]
+        return format!("Failed to connect to MIDI device on macOS: {}. Please ensure:\n1. Your app has permission in System Preferences > Security & Privacy > Privacy > Microphone\n2. Your app has permission in System Preferences > Security & Privacy > Privacy > Bluetooth (if using Bluetooth MIDI)\n3. The MIDI device is properly connected and recognized by the system", e);
+        
+        #[cfg(not(target_os = "macos"))]
+        return e.to_string();
+    })?;
     
     // Store connection in app state
     let mut connection_guard = APP_STATE.midi_connection.lock().unwrap();

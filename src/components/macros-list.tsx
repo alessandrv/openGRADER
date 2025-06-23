@@ -214,6 +214,9 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   } | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   
+  // Add loading state for categories
+  const [categoryLoadingStates, setCategoryLoadingStates] = useState<Set<string>>(new Set());
+  
   // Clean implementation of drag and drop state
   type DragItem = {
     id: string;
@@ -629,10 +632,20 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     isOpen: boolean;
     newMacro: MacroDefinition | null;
     conflictingMacros: MacroDefinition[];
+    isCategoryActivation?: boolean;
+    isInternalConflict?: boolean;
+    categoryId?: string;
+    categoryName?: string;
+    macroName?: string;
+    categoryMacros?: MacroDefinition[];
+    selectedMacrosToKeep?: Set<string>;
   }>({
     isOpen: false,
     newMacro: null,
-    conflictingMacros: []
+    conflictingMacros: [],
+    isCategoryActivation: false,
+    isInternalConflict: false,
+    selectedMacrosToKeep: new Set()
   });
   
   // Reference to track elements being deleted with animation
@@ -712,8 +725,8 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   
   // Single initialization effect - loads everything once
   useEffect(() => {
-    const initializeApp = async () => {
-      console.log("Initializing MacrosList component");
+    const loadMacrosFromStorage = () => {
+      console.log("Loading MacrosList component");
       
       // Load categories first
       loadCategories();
@@ -731,28 +744,28 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       }
       
       // Load macros from localStorage
-      console.log("Loading macros from localStorage");
-      const storedMacros = localStorage.getItem("midiMacros");
+    console.log("Loading macros from localStorage");
+    const storedMacros = localStorage.getItem("midiMacros");
       let loadedMacros: MacroDefinition[] = [];
       
-      if (storedMacros) {
-        try {
-          const parsedMacros = JSON.parse(storedMacros);
+    if (storedMacros) {
+      try {
+        const parsedMacros = JSON.parse(storedMacros);
+        
+        // Debug: Check for duplicates in loaded macros
+        const macroIds = parsedMacros.map((m: MacroDefinition) => m.id);
+        const uniqueIds = new Set(macroIds);
+        const hasDuplicates = macroIds.length !== uniqueIds.size;
+        
+        if (hasDuplicates) {
+          console.warn("Found duplicate macro IDs in localStorage!");
           
-          // Debug: Check for duplicates in loaded macros
-          const macroIds = parsedMacros.map((m: MacroDefinition) => m.id);
-          const uniqueIds = new Set(macroIds);
-          const hasDuplicates = macroIds.length !== uniqueIds.size;
+          // Find the duplicates
+          const duplicateIds = macroIds.filter((id: string, idx: number) => 
+            macroIds.indexOf(id) !== idx
+          );
           
-          if (hasDuplicates) {
-            console.warn("Found duplicate macro IDs in localStorage!");
-            
-            // Find the duplicates
-            const duplicateIds = macroIds.filter((id: string, idx: number) => 
-              macroIds.indexOf(id) !== idx
-            );
-            
-            console.warn(`Duplicate IDs: ${duplicateIds.join(", ")}`);
+          console.warn(`Duplicate IDs: ${duplicateIds.join(", ")}`);
             
             // Filter out duplicates before setting state - keep only the first occurrence
             loadedMacros = parsedMacros.filter((macro: MacroDefinition, idx: number) => 
@@ -762,71 +775,91 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
             // Write back de-duplicated macros to localStorage
             localStorage.setItem("midiMacros", JSON.stringify(loadedMacros));
             console.log("De-duplicated macros saved back to localStorage");
-          } else {
+        } else {
             loadedMacros = parsedMacros;
-            console.log(`Loaded ${parsedMacros.length} macros from localStorage`);
-          }
-        } catch (e) {
-          console.error("Failed to parse macros from localStorage:", e);
-          loadedMacros = [];
+          console.log(`Loaded ${parsedMacros.length} macros from localStorage`);
         }
-      } else {
-        console.log("No macros found in localStorage");
-        loadedMacros = [];
+      } catch (e) {
+        console.error("Failed to parse macros from localStorage:", e);
+          loadedMacros = [];
       }
-      
+    } else {
+      console.log("No macros found in localStorage");
+        loadedMacros = [];
+    }
+  
       // Set macros state
       setMacros(loadedMacros);
-      
-      // Handle reactivating saved macros if we have any macros
-      if (loadedMacros.length > 0) {
-        const activeFromStorage = localStorage.getItem("activeMidiMacros");
-        if (activeFromStorage) {
-          try {
-            const activeIds = JSON.parse(activeFromStorage);
-            if (Array.isArray(activeIds) && activeIds.length > 0) {
-              console.log(`Reactivating ${activeIds.length} macros from storage:`, activeIds);
-              
-              const newActiveMacros = new Set<string>();
-              
-              // Process reactivation synchronously to avoid multiple renders
-              for (const id of activeIds) {
-                try {
-                  const macro = loadedMacros.find(m => m.id === id);
-                  if (macro) {
-                    console.log(`Reactivating macro: ${macro.name} (${id})`);
-                    
-                    // Convert to MacroConfig format
-                    const config = createMacroConfig(macro);
-                    
-                    // Register with Tauri backend
-                    await registerMacro(config);
-                    
-                    // Track as active
-                    newActiveMacros.add(id);
-                    
-                    console.log(`Successfully reactivated macro: ${macro.name}`);
-                  } else {
-                    console.warn(`Could not find macro with ID: ${id}`);
-                  }
-                } catch (error) {
-                  console.error(`Error reactivating macro ${id}:`, error);
-                }
-              }
-              
-              // Update active macros state once at the end
-              setActiveMacros(newActiveMacros);
-              console.log(`Reactivated ${newActiveMacros.size} macros successfully`);
-            }
-          } catch (e) {
-            console.error("Failed to parse active macros from storage:", e);
-          }
+    
+      // Load active macros from localStorage to sync UI state
+    const activeFromStorage = localStorage.getItem("activeMidiMacros");
+    if (activeFromStorage) {
+      try {
+        const activeIds = JSON.parse(activeFromStorage);
+          if (Array.isArray(activeIds) && activeIds.length > 0) {
+            console.log(`Setting active macros from storage:`, activeIds);
+          setActiveMacros(new Set(activeIds));
         }
+      } catch (e) {
+        console.error("Failed to parse active macros from storage:", e);
       }
+    }
+    };
+    
+    const initializeApp = async () => {
+      loadMacrosFromStorage();
+      
+      // Check for macro update information and handle it after loading
+      await handleMacroUpdateIfNeeded();
     };
     
     initializeApp();
   }, []); // Only run once on mount
+
+  // Watch for new macros and auto-enable them
+  useEffect(() => {
+    // Skip auto-activation during initial load
+    if (macros.length === 0) return;
+    
+    // Get the previous macro count from localStorage to detect new macros
+    const previousMacrosString = localStorage.getItem("midiMacros");
+    if (!previousMacrosString) {
+      // If no previous macros in storage, update localStorage and skip auto-enable
+      localStorage.setItem("midiMacros", JSON.stringify(macros));
+      return;
+    }
+    
+    try {
+      const previousMacros = JSON.parse(previousMacrosString);
+      const currentMacroIds = new Set(macros.map(m => m.id));
+      const previousMacroIds = new Set(previousMacros.map((m: MacroDefinition) => m.id));
+      
+      // Find newly added macros
+      const newMacroIds = [...currentMacroIds].filter(id => !previousMacroIds.has(id));
+      
+      // Always update localStorage with current macros after comparison
+      localStorage.setItem("midiMacros", JSON.stringify(macros));
+      
+      if (newMacroIds.length > 0) {
+        console.log(`Detected ${newMacroIds.length} new macros, auto-enabling them:`, newMacroIds);
+        
+        // Auto-enable new macros after a short delay to ensure UI is ready
+        setTimeout(async () => {
+          for (const newId of newMacroIds) {
+            const newMacro = macros.find(m => m.id === newId);
+            if (newMacro) {
+              console.log(`Auto-enabling new macro: ${newMacro.name}`);
+              await handleToggleMacro(newId, true, true);
+            }
+          }
+        }, 100);
+      }
+    } catch (e) {
+      console.error("Error checking for new macros:", e);
+      // Even if there's an error, update localStorage to prevent issues
+      localStorage.setItem("midiMacros", JSON.stringify(macros));
+    }
+  }, [macros]); // Watch macros array for changes
 
   // Load categories from localStorage
   const loadCategories = () => {
@@ -963,12 +996,24 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       if (isActive) {
         const conflictingMacros = findConflictingMacros(macro);
         
-        // If there are conflicts, show the modal instead of activating immediately
+        // If there are conflicts, show the comprehensive conflict modal
         if (conflictingMacros.length > 0) {
+          // Create a descriptive conflict scenario
+          const macroName = macro.groupId ? 
+            macro.name.replace(/ \(.*\)$/, "") : macro.name;
+          const macroCategory = categories.find(c => c.id === (macro.categoryId || "default"))?.name || "General";
+          
           setConflictModal({
             isOpen: true,
             newMacro: macro,
-            conflictingMacros
+            conflictingMacros,
+            isCategoryActivation: false,
+            isInternalConflict: false,
+            categoryId: macro.categoryId || "default",
+            categoryName: macroCategory,
+            macroName: macroName,
+            categoryMacros: undefined,
+            selectedMacrosToKeep: undefined
           });
           return; // Don't proceed with activation yet
         }
@@ -1105,8 +1150,233 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     }
   };
 
+  // Helper function to deactivate conflicting macros and activate category
+  const deactivateConflictingMacrosAndActivateCategory = async () => {
+    if (!conflictModal.categoryId || !conflictModal.categoryMacros) return;
+    
+    // Deactivate conflicting macros
+    for (const conflictingMacro of conflictModal.conflictingMacros) {
+      // If this is part of a group, deactivate all macros in the group
+      if (conflictingMacro.groupId) {
+        const groupMacros = macros.filter(m => m.groupId === conflictingMacro.groupId);
+        for (const groupMacro of groupMacros) {
+          await invoke('cancel_macro', { id: groupMacro.id });
+          console.log(`Deactivated conflicting group macro: ${groupMacro.id}`);
+        }
+      } else {
+        await invoke('cancel_macro', { id: conflictingMacro.id });
+        console.log(`Deactivated conflicting macro: ${conflictingMacro.id}`);
+      }
+    }
+    
+    // Update active macros set - remove conflicting ones
+    const newActiveMacros = new Set(activeMacros);
+    for (const conflictingMacro of conflictModal.conflictingMacros) {
+      if (conflictingMacro.groupId) {
+        const groupMacros = macros.filter(m => m.groupId === conflictingMacro.groupId);
+        for (const groupMacro of groupMacros) {
+          newActiveMacros.delete(groupMacro.id);
+        }
+      } else {
+        newActiveMacros.delete(conflictingMacro.id);
+      }
+    }
+    
+    // Activate category macros
+    for (const macro of conflictModal.categoryMacros) {
+      try {
+        const config = createMacroConfig(macro);
+        await registerMacro(config);
+        newActiveMacros.add(macro.id);
+        console.log(`Activated category macro: ${macro.id}`);
+      } catch (err) {
+        console.error(`Error activating category macro ${macro.id}:`, err);
+      }
+    }
+    
+    // Update state
+    setActiveMacros(newActiveMacros);
+    localStorage.setItem("activeMidiMacros", JSON.stringify([...newActiveMacros]));
+    
+    addToast({
+      title: "Category Activated",
+      description: `${conflictModal.categoryName} macros are now active, conflicting macros deactivated`,
+      color: "success"
+    });
+  };
+
   // New function to handle conflict resolution
-  const handleResolveConflict = async (action: "new" | "existing" | "cancel") => {
+  const handleResolveConflict = async (action: "new" | "existing" | "cancel" | "selected") => {
+    // Handle internal category conflicts first
+    if (conflictModal.isInternalConflict && action === "selected") {
+      // Allow proceeding with no macros selected - this will disable all conflicting macros
+      const selectedMacrosToKeep = conflictModal.selectedMacrosToKeep || new Set();
+      
+      try {
+        // Get all macros in the category
+        const allCategoryMacros = conflictModal.categoryMacros || [];
+        console.log(`Processing category with ${allCategoryMacros.length} total macros`);
+        
+        // Get conflicting macro IDs
+        const conflictingIds = new Set(conflictModal.conflictingMacros.map(m => m.id));
+        
+        // Get non-conflicting macros (these should all be activated)
+        const nonConflictingMacros = allCategoryMacros.filter(m => !conflictingIds.has(m.id));
+        
+        // Get selected conflicting macros
+        const selectedConflictingMacros = Array.from(selectedMacrosToKeep)
+          .map(id => macros.find(m => m.id === id))
+          .filter(m => m) as MacroDefinition[];
+        
+        // Get unselected conflicting macros (these need to be deactivated)
+        const unselectedConflictingMacros = conflictModal.conflictingMacros.filter(m => !selectedMacrosToKeep.has(m.id));
+        
+        // Combine non-conflicting + selected conflicting macros
+        const macrosToActivate = [...nonConflictingMacros, ...selectedConflictingMacros];
+        console.log(`Activating ${nonConflictingMacros.length} non-conflicting + ${selectedConflictingMacros.length} selected = ${macrosToActivate.length} total macros`);
+        console.log(`Deactivating ${unselectedConflictingMacros.length} unselected conflicting macros`);
+        
+        // Set loading state for the category
+        setCategoryLoadingStates(prev => new Set([...prev, conflictModal.categoryId || ""]));
+        
+        // Start with current active macros (to preserve macros from other categories)
+        const newActiveMacros = new Set(activeMacros);
+        
+        // First, deactivate unselected conflicting macros that are currently active
+        for (const macro of unselectedConflictingMacros) {
+          if (activeMacros.has(macro.id)) {
+            try {
+              await invoke('cancel_macro', { id: macro.id });
+              newActiveMacros.delete(macro.id);
+              console.log(`Deactivated unselected conflicting macro: ${macro.name}`);
+            } catch (err) {
+              console.error(`Error deactivating macro ${macro.id}:`, err);
+            }
+          }
+        }
+        
+        // Group macros to activate by encoder groups to avoid duplicate activation
+        const groupsToActivate = new Set<string | undefined>();
+        const standaloneMacros: MacroDefinition[] = [];
+        
+        // Sort macros into groups and standalone macros
+        macrosToActivate.forEach(macro => {
+          if (macro.groupId) {
+            groupsToActivate.add(macro.groupId);
+          } else {
+            standaloneMacros.push(macro);
+          }
+        });
+        
+        // Activate encoder groups
+        for (const groupId of groupsToActivate) {
+          if (!groupId) continue;
+          
+          // Get all macros in this group that should be activated
+          const groupMacros = macrosToActivate.filter(m => m.groupId === groupId);
+          console.log(`Activating group ${groupId} with ${groupMacros.length} macros`);
+          
+          // Activate each one
+          for (const macro of groupMacros) {
+            try {
+              const config = createMacroConfig(macro);
+              await registerMacro(config);
+              newActiveMacros.add(macro.id);
+              console.log(`Activated macro: ${macro.name}`);
+            } catch (err) {
+              console.error(`Error activating macro ${macro.id}:`, err);
+            }
+          }
+        }
+        
+        // Activate standalone macros
+        for (const macro of standaloneMacros) {
+          try {
+            const config = createMacroConfig(macro);
+            await registerMacro(config);
+            newActiveMacros.add(macro.id);
+            console.log(`Activated standalone macro: ${macro.name}`);
+          } catch (err) {
+            console.error(`Error activating macro ${macro.id}:`, err);
+          }
+        }
+        
+        setActiveMacros(newActiveMacros);
+        localStorage.setItem("activeMidiMacros", JSON.stringify([...newActiveMacros]));
+        
+        const toastMessage = selectedConflictingMacros.length === 0 
+          ? `Activated ${nonConflictingMacros.length} macro(s), disabled ${unselectedConflictingMacros.length} conflicting macro(s)`
+          : `Activated ${macrosToActivate.length} macro(s) from ${conflictModal.categoryName}`;
+        
+        addToast({
+          title: "Category Activated",
+          description: toastMessage,
+          color: "success"
+        });
+      } catch (err) {
+        console.error("Error processing conflict resolution:", err);
+        addToast({
+          title: "Activation Error",
+          description: `Failed to process conflict resolution: ${(err as Error).message}`,
+          color: "danger"
+        });
+      } finally {
+        // Clear loading state
+        setCategoryLoadingStates(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(conflictModal.categoryId || "");
+          return newSet;
+        });
+        
+        setConflictModal({
+          isOpen: false,
+          newMacro: null,
+          conflictingMacros: [],
+          isCategoryActivation: false,
+          isInternalConflict: false,
+          selectedMacrosToKeep: new Set()
+        });
+      }
+      return;
+    }
+
+    // Handle category activation conflicts
+    if (conflictModal.isCategoryActivation) {
+      try {
+        if (action === "new") {
+          // Deactivate conflicting macros and activate category
+          await deactivateConflictingMacrosAndActivateCategory();
+        } else if (action === "existing") {
+          // Keep existing macros, don't activate category
+          addToast({
+            title: "Kept Existing Macros",
+            description: "Existing macros remain active, category not activated",
+            color: "primary"
+          });
+        }
+        // Cancel does nothing
+      } catch (err) {
+        console.error("Error resolving category conflict:", err);
+        addToast({
+          title: "Error",
+          description: `Failed to resolve category conflict: ${(err as Error).message}`,
+          color: "danger"
+        });
+      } finally {
+        // Close the modal
+        setConflictModal({
+          isOpen: false,
+          newMacro: null,
+          conflictingMacros: [],
+          isCategoryActivation: false,
+          isInternalConflict: false,
+          selectedMacrosToKeep: new Set()
+        });
+      }
+      return;
+    }
+
+    // Handle individual macro conflicts
     if (!conflictModal.newMacro) return;
     
     try {
@@ -1239,7 +1509,10 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       setConflictModal({
         isOpen: false,
         newMacro: null,
-        conflictingMacros: []
+        conflictingMacros: [],
+        isCategoryActivation: false,
+        isInternalConflict: false,
+        selectedMacrosToKeep: new Set()
       });
     }
   };
@@ -1570,6 +1843,12 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   const handleToggleCategory = (categoryId: string, isActive: boolean) => {
     console.log(`Toggle category ${categoryId}, active: ${isActive}`);
     
+    // Don't allow multiple operations on the same category
+    if (categoryLoadingStates.has(categoryId)) {
+      console.log(`Category ${categoryId} is already being processed, ignoring request`);
+      return;
+    }
+    
     // First check if we need to prompt the user for exclusive mode
     if (isActive) {
       console.log(`Opening category activation modal for ${categoryId}`);
@@ -1587,10 +1866,108 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
 
   // Function to activate macros in a category, with exclusive option
   const activateCategoryMacros = async (categoryId: string, exclusive: boolean) => {
+    // Set loading state
+    setCategoryLoadingStates(prev => new Set([...prev, categoryId]));
+    
     try {
       console.log(`Activating category ${categoryId}, exclusive: ${exclusive}`);
       
-      // If exclusive, first deactivate all macros
+      // Get all macros in the specified category first
+      const categoryMacros = macros.filter(m => (m.categoryId || "default") === categoryId);
+      console.log(`Found ${categoryMacros.length} macros in category ${categoryId}`);
+      
+      // Check for conflicts with macros in this category
+      const allConflictingMacros: MacroDefinition[] = [];
+      const internalConflicts: MacroDefinition[] = [];
+      
+      // First, check for conflicts within the category itself - improved logic
+      for (let i = 0; i < categoryMacros.length; i++) {
+        for (let j = i + 1; j < categoryMacros.length; j++) {
+          const macro1 = categoryMacros[i];
+          const macro2 = categoryMacros[j];
+          
+          // Check if these two macros conflict with each other by comparing triggers
+          const hasConflict = 
+            macro1.trigger.type === macro2.trigger.type &&
+            macro1.trigger.channel === macro2.trigger.channel &&
+            (
+              // For controlchange, check controller number and optionally value
+              (macro1.trigger.type === "controlchange" && 
+               macro1.trigger.controller === macro2.trigger.controller &&
+               (macro1.trigger.value === undefined || macro2.trigger.value === undefined || 
+                macro1.trigger.value === macro2.trigger.value)) ||
+              // For note events, check note number
+              (macro1.trigger.type === "noteon" && 
+               macro1.trigger.note === macro2.trigger.note)
+            );
+          
+          if (hasConflict) {
+            // We found internal conflicts - add both macros
+            if (!internalConflicts.some(m => m.id === macro1.id)) {
+              internalConflicts.push(macro1);
+            }
+            if (!internalConflicts.some(m => m.id === macro2.id)) {
+              internalConflicts.push(macro2);
+            }
+          }
+        }
+      }
+      
+      // If there are internal conflicts, show the conflict modal immediately
+      if (internalConflicts.length > 0) {
+        const categoryName = categories.find(c => c.id === categoryId)?.name || "Selected category";
+        
+        setConflictModal({
+          isOpen: true,
+          newMacro: null,
+          conflictingMacros: internalConflicts,
+          isCategoryActivation: true,
+          isInternalConflict: true,
+          categoryId,
+          categoryName,
+          categoryMacros,
+          selectedMacrosToKeep: new Set()
+        });
+        return; // Don't proceed with activation
+      }
+      
+      // Then check for conflicts with active macros from other categories
+      for (const macro of categoryMacros) {
+        const conflicts = findConflictingMacros(macro);
+        // Only include conflicts that are currently active and not in the same category
+        const activeConflicts = conflicts.filter(c => 
+          activeMacros.has(c.id) && (c.categoryId || "default") !== categoryId
+        );
+        
+        if (activeConflicts.length > 0) {
+          allConflictingMacros.push(...activeConflicts);
+        }
+      }
+      
+      // Remove duplicates from conflicting macros
+      const uniqueConflicts = allConflictingMacros.filter((macro, index, self) => 
+        self.findIndex(m => m.id === macro.id) === index
+      );
+      
+      // If there are conflicts and not exclusive mode, show conflict modal
+      if (uniqueConflicts.length > 0 && !exclusive) {
+        const categoryName = categories.find(c => c.id === categoryId)?.name || "Selected category";
+        
+        setConflictModal({
+          isOpen: true,
+          newMacro: null,
+          conflictingMacros: uniqueConflicts,
+          isCategoryActivation: true,
+          isInternalConflict: false,
+          categoryId,
+          categoryName,
+          categoryMacros,
+          selectedMacrosToKeep: undefined
+        });
+        return; // Don't proceed with activation yet
+      }
+      
+      // If exclusive, first deactivate all macros (this handles conflicts automatically)
       if (exclusive) {
         console.log("Exclusive mode - deactivating all active macros first");
         
@@ -1613,10 +1990,6 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
           }
         }
       }
-      
-      // Get all macros in the specified category
-      const categoryMacros = macros.filter(m => (m.categoryId || "default") === categoryId);
-      console.log(`Found ${categoryMacros.length} macros in category ${categoryId}`);
       
       // Group by encoder groups to avoid duplicate activation
       const groupsToActivate = new Set<string | undefined>();
@@ -1700,70 +2073,51 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         description: `Failed to activate category macros: ${(err as Error).message}`,
         color: "danger"
       });
+    } finally {
+      // Clear loading state
+      setCategoryLoadingStates(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(categoryId);
+        return newSet;
+      });
     }
   };
 
   // Function to deactivate all macros in a category
   const deactivateCategoryMacros = async (categoryId: string) => {
+    // Set loading state
+    setCategoryLoadingStates(prev => new Set([...prev, categoryId]));
+    
     try {
       console.log(`Deactivating all macros in category ${categoryId}`);
       
       // Get all macros in the category
       const categoryMacros = macros.filter(m => (m.categoryId || "default") === categoryId);
-      console.log(`Found ${categoryMacros.length} macros to deactivate`);
+      console.log(`Found ${categoryMacros.length} macros in category to deactivate`);
       
-      // Group by encoder groups to avoid duplicate deactivation
-      const groupsToDeactivate = new Set<string | undefined>();
-      const standaloneMacros: MacroDefinition[] = [];
+      // Get currently active macros from this category
+      const activeIdsInCategory = categoryMacros
+        .filter(m => activeMacros.has(m.id))
+        .map(m => m.id);
       
-      // Sort macros into groups and standalone macros
-      categoryMacros.forEach(macro => {
-        if (macro.groupId) {
-          groupsToDeactivate.add(macro.groupId);
-        } else {
-          standaloneMacros.push(macro);
-        }
-      });
+      console.log(`Found ${activeIdsInCategory.length} active macros in category to deactivate`);
       
-      console.log(`Deactivating ${groupsToDeactivate.size} encoder groups and ${standaloneMacros.length} standalone macros`);
+      // Create new active set by removing this category's macros
+      const newActiveMacros = new Set(activeMacros);
       
-      // Track new active macros
-      const newActiveMacros = new Set([...activeMacros]);
-      
-      // Deactivate all group macros
-      for (const groupId of groupsToDeactivate) {
-        if (!groupId) continue;
-        
-        // Get all macros in this group
-        const groupMacros = macros.filter(m => m.groupId === groupId);
-        console.log(`Deactivating group ${groupId} with ${groupMacros.length} macros`);
-        
-        // Deactivate each one
-        for (const macro of groupMacros) {
+      // Deactivate each active macro in the category
+      for (const macro of categoryMacros) {
+        if (activeMacros.has(macro.id)) {
           try {
             // Call the backend to cancel the macro
             await invoke('cancel_macro', { id: macro.id });
+            console.log(`Deactivated macro ${macro.id}`);
             
             // Remove from tracking
             newActiveMacros.delete(macro.id);
-            console.log(`Deactivated macro ${macro.id}`);
           } catch (err) {
             console.error(`Error deactivating macro ${macro.id}:`, err);
           }
-        }
-      }
-      
-      // Deactivate standalone macros
-      for (const macro of standaloneMacros) {
-        try {
-          // Call the backend to cancel the macro
-          await invoke('cancel_macro', { id: macro.id });
-          
-          // Remove from tracking
-          newActiveMacros.delete(macro.id);
-          console.log(`Deactivated standalone macro ${macro.id}`);
-        } catch (err) {
-          console.error(`Error deactivating macro ${macro.id}:`, err);
         }
       }
       
@@ -1787,6 +2141,13 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         title: "Deactivation Error",
         description: `Failed to deactivate category macros: ${(err as Error).message}`,
         color: "danger"
+      });
+    } finally {
+      // Clear loading state
+      setCategoryLoadingStates(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(categoryId);
+        return newSet;
       });
     }
   };
@@ -1821,6 +2182,81 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       // Include timeout if it exists
       timeout: macro.timeout
     };
+  };
+
+  // Function to handle macro updates from MacroBuilder
+  const handleMacroUpdateIfNeeded = async () => {
+    const updateInfoStr = localStorage.getItem("macroUpdateInfo");
+    if (updateInfoStr) {
+      try {
+        const updateInfo = JSON.parse(updateInfoStr);
+        console.log("Found macro update info:", updateInfo);
+        
+        if (updateInfo.wasActive && updateInfo.oldMacroIds && updateInfo.newMacroIds) {
+          console.log("Handling macro update: deactivating old and reactivating new");
+          
+          // First, deactivate all old macro registrations
+          for (const oldId of updateInfo.oldMacroIds) {
+            try {
+              await invoke('cancel_macro', { id: oldId });
+              console.log(`Deactivated old macro registration: ${oldId}`);
+            } catch (err) {
+              console.error(`Error deactivating old macro ${oldId}:`, err);
+            }
+          }
+          
+          // Update active macros state - remove old IDs
+          const activeFromStorage = localStorage.getItem("activeMidiMacros");
+          if (activeFromStorage) {
+            try {
+              let activeIds = JSON.parse(activeFromStorage);
+              
+              // Remove old IDs
+              activeIds = activeIds.filter((id: string) => !updateInfo.oldMacroIds.includes(id));
+              
+              // Add new IDs
+              activeIds.push(...updateInfo.newMacroIds);
+              
+              // Remove duplicates
+              activeIds = [...new Set(activeIds)];
+              
+              // Save back to storage
+              localStorage.setItem("activeMidiMacros", JSON.stringify(activeIds));
+              
+              // Update component state
+              setActiveMacros(new Set(activeIds));
+              
+              console.log("Updated active macros after macro update:", activeIds);
+            } catch (e) {
+              console.error("Error updating active macros after macro update:", e);
+            }
+          }
+          
+          // Now reactivate the new macros
+          const allMacros: MacroDefinition[] = JSON.parse(localStorage.getItem("midiMacros") || "[]");
+          for (const newId of updateInfo.newMacroIds) {
+            const newMacro = allMacros.find(m => m.id === newId);
+            if (newMacro) {
+              try {
+                const config = createMacroConfig(newMacro);
+                await registerMacro(config);
+                console.log(`Reactivated updated macro: ${newMacro.name} (${newId})`);
+              } catch (err) {
+                console.error(`Error reactivating updated macro ${newId}:`, err);
+              }
+            }
+          }
+          
+          console.log("Macro update handling completed");
+        }
+        
+        // Clean up the update info
+        localStorage.removeItem("macroUpdateInfo");
+      } catch (e) {
+        console.error("Error handling macro update info:", e);
+        localStorage.removeItem("macroUpdateInfo");
+      }
+    }
   };
 
   // Add a function to check if all macros in a category are active
@@ -2646,6 +3082,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     }
   };
 
+
   if (macros.length === 0) {
     return (
       <div className="">
@@ -2791,12 +3228,18 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                   </Chip>
                 </div>
                 <div className="flex items-center gap-2">
+                  {categoryLoadingStates.has(category.id) ? (
+                    <div className="mr-1 w-8 h-5 flex items-center justify-center">
+                      <Icon icon="lucide:loader-2" className="text-primary animate-spin text-sm" />
+                    </div>
+                  ) : (
                   <Switch
                     size="sm"
                     isSelected={isCategoryActive(category.id)}
                     onValueChange={(isSelected) => handleToggleCategory(category.id, isSelected)}
                     className="mr-1"
                   />
+                  )}
                   
                   {/* Edit category button */}
                   {category.id !== "default" && (
@@ -3024,6 +3467,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                                 deletePopoverOpen,
                                 setDeletePopoverOpen
                               },
+                              springConfig: { stiffness: 500, damping: 80 }, // More responsive drag
                               container: () => document.body
                             })
                           );
@@ -3175,12 +3619,18 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                                     </Chip>
                                 </div>
                 <div className="flex items-center gap-2">
+                                                {categoryLoadingStates.has(category.id) ? (
+                  <div className="mr-1 w-8 h-5 flex items-center justify-center">
+                    <Icon icon="lucide:loader-2" className="text-primary animate-spin text-sm" />
+                  </div>
+                ) : (
                                 <Switch
                                   size="sm"
                     isSelected={isCategoryActive(category.id)}
                     onValueChange={(isSelected) => handleToggleCategory(category.id, isSelected)}
                     className="mr-1"
                                 />
+                )}
                   
                   {/* Edit category button */}
                   {category.id !== "default" && (
@@ -3425,24 +3875,120 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       {/* Conflict Resolution Modal */}
       <Modal isOpen={conflictModal.isOpen} onClose={() => setConflictModal(prev => ({ ...prev, isOpen: false }))}>
         <ModalContent>
-          <ModalHeader>MIDI Trigger Conflict</ModalHeader>
+          <ModalHeader>
+            {conflictModal.isInternalConflict 
+              ? "Internal Category Conflicts"
+              : conflictModal.isCategoryActivation 
+                ? "Category Activation Conflict" 
+                : "MIDI Trigger Conflict"
+            }
+          </ModalHeader>
           <ModalBody>
             <div className="space-y-4">
               <div className="p-3 border border-warning-200 bg-warning-50 rounded-md">
                 <div className="flex items-start gap-3">
                   <Icon icon="lucide:alert-triangle" className="text-warning text-xl mt-0.5" />
                   <div>
-                    <p className="font-medium">The macro you're trying to activate conflicts with existing active macro(s):</p>
+                    <p className="font-medium">
+                      {conflictModal.isInternalConflict 
+                        ? `Multiple macros in "${conflictModal.categoryName}" category have the same MIDI trigger:`
+                        : conflictModal.isCategoryActivation 
+                          ? `Macros in "${conflictModal.categoryName}" category conflict with active macros from other categories:`
+                          : conflictModal.macroName
+                            ? `"${conflictModal.macroName}" from "${conflictModal.categoryName}" conflicts with active macro(s) from other categories:`
+                            : "The macro you're trying to activate conflicts with existing active macro(s):"
+                      }
+                    </p>
                     <ul className="mt-2 list-disc list-inside text-sm">
-                      {conflictModal.conflictingMacros.map(m => (
-                        <li key={m.id}>{m.name}</li>
-                      ))}
+                      {conflictModal.conflictingMacros.map(m => {
+                        const conflictingCategory = categories.find(c => c.id === (m.categoryId || "default"))?.name || "General";
+                        return (
+                          <li key={m.id}>
+                            {m.name} {!conflictModal.isInternalConflict && (
+                              <span className="text-foreground-400">({conflictingCategory})</span>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 </div>
               </div>
               
-              <p>These macros use the same MIDI trigger. You can:</p>
+              {conflictModal.isInternalConflict ? (
+                // Special UI for internal conflicts - let user select which macros to keep
+                <div className="space-y-3">
+                  <p className="text-sm">Select which macros you want to keep active:</p>
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                    {conflictModal.conflictingMacros.map(macro => (
+                      <label key={macro.id} className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-default-50">
+                        <input
+                          type="checkbox"
+                          checked={conflictModal.selectedMacrosToKeep?.has(macro.id) || false}
+                          onChange={(e) => {
+                            const newSelected = new Set(conflictModal.selectedMacrosToKeep);
+                            if (e.target.checked) {
+                              newSelected.add(macro.id);
+                            } else {
+                              newSelected.delete(macro.id);
+                            }
+                            setConflictModal(prev => ({ 
+                              ...prev, 
+                              selectedMacrosToKeep: newSelected 
+                            }));
+                          }}
+                          className="w-4 h-4"
+                        />
+                        <div className="flex-1">
+                          <div className="font-medium">{macro.name}</div>
+                          <div className="text-sm text-foreground-500">
+                            {getTriggerDescription(macro.trigger)}
+                          </div>
+                          {macro.actions && macro.actions.length > 0 && (
+                            <div className="text-xs text-foreground-400 mt-1">
+                              {macro.actions.length} action{macro.actions.length !== 1 ? 's' : ''}
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex justify-between pt-3">
+                    <Button 
+                      size="sm"
+                      variant="flat"
+                      onPress={() => {
+                        setConflictModal(prev => ({ 
+                          ...prev, 
+                          selectedMacrosToKeep: new Set(conflictModal.conflictingMacros.map(m => m.id))
+                        }));
+                      }}
+                    >
+                      Select All
+                    </Button>
+                    <Button 
+                      size="sm"
+                      variant="flat"
+                      onPress={() => {
+                        setConflictModal(prev => ({ 
+                          ...prev, 
+                          selectedMacrosToKeep: new Set()
+                        }));
+                      }}
+                    >
+                      Select None
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                // Original UI for external conflicts
+                <div className="space-y-3">
+                  <p>
+                    {conflictModal.isCategoryActivation 
+                      ? "These macros use the same MIDI triggers as macros in the category. You can:"
+                      : "These macros use the same MIDI trigger. You can:"
+                    }
+                  </p>
               
               <div className="space-y-2">
                 <Button 
@@ -3453,9 +3999,17 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                   startContent={<Icon icon="lucide:replace" className="text-primary mr-2" />}
                 >
                   <div>
-                    <h4 className="font-medium text-left">Replace existing macro(s)</h4>
+                        <h4 className="font-medium text-left">
+                          {conflictModal.isCategoryActivation 
+                            ? "Replace and activate category"
+                            : "Replace existing macro(s)"
+                          }
+                        </h4>
                     <p className="text-xs text-foreground-500 text-left">
-                      Deactivate the conflicting macro(s) and activate the new one
+                          {conflictModal.isCategoryActivation 
+                            ? "Deactivate conflicting macros and activate the category"
+                            : "Deactivate the conflicting macro(s) and activate the new one"
+                          }
                     </p>
                   </div>
                 </Button>
@@ -3470,20 +4024,44 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                   <div>
                     <h4 className="font-medium text-left">Keep existing macro(s)</h4>
                     <p className="text-xs text-foreground-500 text-left">
-                      Leave the existing macro(s) active and don't activate the new one
+                          {conflictModal.isCategoryActivation 
+                            ? "Leave existing macros active and don't activate the category"
+                            : "Leave the existing macro(s) active and don't activate the new one"
+                          }
                     </p>
                   </div>
                 </Button>
               </div>
+                </div>
+              )}
             </div>
           </ModalBody>
           <ModalFooter>
+            {conflictModal.isInternalConflict ? (
+              <>
             <Button 
               variant="light" 
               onPress={() => handleResolveConflict("cancel")}
             >
               Cancel
             </Button>
+                <Button 
+                  color="primary"
+                  onPress={() => handleResolveConflict("selected")}
+                >
+                  {(conflictModal.selectedMacrosToKeep?.size || 0) === 0 
+                    ? "Disable All Conflicting Macros" 
+                    : `Activate Selected (${conflictModal.selectedMacrosToKeep?.size || 0})`}
+                </Button>
+              </>
+            ) : (
+              <Button 
+                variant="light" 
+                onPress={() => handleResolveConflict("cancel")}
+              >
+                Cancel
+              </Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>

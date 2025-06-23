@@ -694,12 +694,12 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         </div>
       </div>
       
-      <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-3 xs:grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5  gap-4">
         {/* Create New Macro Card - iOS style glossy card */}
         {!showExportSelection && (
           <Card 
             isPressable
-            className="relative overflow-hidden h-[260px] shadow-md backdrop-blur-sm hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02] hover:border-primary/20 group"
+            className="relative overflow-hidden h-[200px] shadow-md backdrop-blur-sm hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02] hover:border-primary/20 group"
             onPress={onCreateNewMacro}
           >
             {/* Subtle gradient background effect */}
@@ -715,9 +715,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                 Start from scratch with a blank macro
               </p>
               
-              <span className="absolute bottom-4 text-xs text-foreground-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                Tap to create →
-              </span>
+              
             </div>
           </Card>
         )}
@@ -737,7 +735,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
               id={`template-${template.id}`}
               isPressable
               className={`
-                h-[260px] transition-all duration-200
+                h-[200px] transition-all duration-200
                 ${showExportSelection 
                   ? isSelected 
                     ? 'shadow-lg ring-2 ring-primary border-primary' 
@@ -927,26 +925,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         })}
         
         {/* iOS-style empty state with illustration effect */}
-        {templates.length === 0 && (
-          <div className="col-span-full">
-            <Card className="p-8 border border-white/10 bg-gradient-to-b from-background/90 to-background backdrop-blur-sm overflow-hidden relative">
-              <div className="absolute inset-0 bg-grid-white/5 mask-linear-gradient-to-b from-transparent to-background"></div>
-              
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-6 relative">
-                <div className="bg-primary/5 p-10 rounded-3xl relative">
-                  <div className="absolute inset-0 bg-grid-white/5"></div>
-                  <Icon icon="lucide:layout-template" className="text-7xl text-primary/60" />
-                  
-                  {/* Decorative elements */}
-                  <div className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-primary/20"></div>
-                  <div className="absolute bottom-3 -left-3 w-4 h-4 rounded-full bg-secondary/30"></div>
-                </div>
-                
-             
-              </div>
-            </Card>
-          </div>
-        )}
+       
       </div>
       
       {/* Template Application Modal */}

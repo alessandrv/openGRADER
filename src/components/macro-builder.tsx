@@ -378,6 +378,23 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
     const timestamp = new Date().toISOString();
     let effectiveGroupId = macroToEdit?.groupId;
 
+    // Track old macro IDs that need to be deactivated
+    const oldMacroIds: string[] = [];
+    
+    // If we're editing an existing macro, collect IDs that need to be deactivated
+    if (macroToEdit) {
+      if (macroToEdit.groupId) {
+        // For encoder groups, collect all related macro IDs
+        const groupMacros = allMacros.filter(m => m.groupId === macroToEdit.groupId);
+        oldMacroIds.push(...groupMacros.map(m => m.id));
+        console.log(`Macro update: Will deactivate ${oldMacroIds.length} old group macros:`, oldMacroIds);
+      } else {
+        // For single macros, just the macro ID
+        oldMacroIds.push(macroToEdit.id);
+        console.log(`Macro update: Will deactivate old macro:`, macroToEdit.id);
+      }
+    }
+
     if (macroType === "standard") {
       const macro: MacroDefinition = {
         id: (macroToEdit && macroToEdit.type === "standard" && macroToEdit.id) ? macroToEdit.id : crypto.randomUUID(),
@@ -398,8 +415,12 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
       effectiveGroupId = effectiveGroupId || crypto.randomUUID();
 
       if (midiTrigger && actions.length > 0) {
+        // Find existing increment macro to preserve its ID if editing
+        const existingIncrementMacro = macroToEdit?.groupId ? 
+          allMacros.find(m => m.groupId === effectiveGroupId && m.type === 'encoder-increment') : null;
+        
         const incrementMacro: MacroDefinition = {
-          id: crypto.randomUUID(),
+          id: existingIncrementMacro?.id || crypto.randomUUID(),
           groupId: effectiveGroupId,
           categoryId: categoryId || undefined,
           name: `${macroName}`,
@@ -410,15 +431,19 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
           beforeActions: beforeActions.length > 0 ? beforeActions : undefined,
           afterActions: afterActions.length > 0 ? afterActions : undefined,
           timeout: sharedTimeout,
-          createdAt: (macroToEdit?.groupId && allMacros.find(m => m.groupId === effectiveGroupId && m.type === 'encoder-increment')?.createdAt) || timestamp,
+          createdAt: existingIncrementMacro?.createdAt || timestamp,
           updatedAt: timestamp,
         };
         newMacrosToSave.push(incrementMacro);
       }
 
       if (decrementTrigger && decrementActions.length > 0) {
+        // Find existing decrement macro to preserve its ID if editing
+        const existingDecrementMacro = macroToEdit?.groupId ? 
+          allMacros.find(m => m.groupId === effectiveGroupId && m.type === 'encoder-decrement') : null;
+        
         const decrementMacro: MacroDefinition = {
-          id: crypto.randomUUID(),
+          id: existingDecrementMacro?.id || crypto.randomUUID(),
           groupId: effectiveGroupId,
           categoryId: categoryId || undefined,
           name: `${macroName}`,
@@ -429,15 +454,19 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
           beforeActions: beforeActions.length > 0 ? beforeActions : undefined,
           afterActions: afterActions.length > 0 ? afterActions : undefined,
           timeout: sharedTimeout,
-          createdAt: (macroToEdit?.groupId && allMacros.find(m => m.groupId === effectiveGroupId && m.type === 'encoder-decrement')?.createdAt) || timestamp,
+          createdAt: existingDecrementMacro?.createdAt || timestamp,
           updatedAt: timestamp,
         };
         newMacrosToSave.push(decrementMacro);
       }
 
       if (macroType === "encoder-click" && clickTrigger && clickActions.length > 0) {
+        // Find existing click macro to preserve its ID if editing
+        const existingClickMacro = macroToEdit?.groupId ? 
+          allMacros.find(m => m.groupId === effectiveGroupId && m.type === 'encoder-click') : null;
+        
         const clickMacro: MacroDefinition = {
-          id: crypto.randomUUID(),
+          id: existingClickMacro?.id || crypto.randomUUID(),
           groupId: effectiveGroupId,
           categoryId: categoryId || undefined,
           name: `${macroName}`,
@@ -448,7 +477,7 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
           beforeActions: beforeActions.length > 0 ? beforeActions : undefined,
           afterActions: afterActions.length > 0 ? afterActions : undefined,
           timeout: sharedTimeout,
-          createdAt: (macroToEdit?.groupId && allMacros.find(m => m.groupId === effectiveGroupId && m.type === 'encoder-click')?.createdAt) || timestamp,
+          createdAt: existingClickMacro?.createdAt || timestamp,
           updatedAt: timestamp,
         };
         newMacrosToSave.push(clickMacro);
@@ -468,6 +497,37 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
     }
 
     localStorage.setItem("midiMacros", JSON.stringify(updatedMacrosArray));
+
+    // If we're editing a macro, we need to signal that old registrations should be cleaned up
+    // and potentially reactivate the updated macro if it was previously active
+    if (macroToEdit && oldMacroIds.length > 0) {
+      // Check if any of the old macros were active
+      const activeFromStorage = localStorage.getItem("activeMidiMacros");
+      let wasActive = false;
+      let activeIds: string[] = [];
+      
+      if (activeFromStorage) {
+        try {
+          activeIds = JSON.parse(activeFromStorage);
+          wasActive = oldMacroIds.some(id => activeIds.includes(id));
+        } catch (e) {
+          console.error("Failed to parse active macros from storage:", e);
+        }
+      }
+      
+      if (wasActive) {
+        console.log("Updated macro was previously active, will need reactivation");
+        // Store information about the macro update for the parent component
+        const updateInfo = {
+          oldMacroIds,
+          newMacroIds: newMacrosToSave.map(m => m.id),
+          wasActive: true
+        };
+        
+        // Store this temporarily for the parent to pick up
+        localStorage.setItem("macroUpdateInfo", JSON.stringify(updateInfo));
+      }
+    }
 
     setMacroName("");
     setActions([]);

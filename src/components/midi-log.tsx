@@ -45,8 +45,15 @@ export const MidiLog = () => {
     <div className="h-full flex flex-col">
       <div className="flex justify-between items-center mb-4">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${isEnabled ? "bg-success" : "bg-danger"}`}></div>
-          <span className="text-sm">{isEnabled ? "MIDI Connected" : "MIDI Disconnected"}</span>
+          <div className={`w-2 h-2 rounded-full ${
+            selectedInput ? "bg-success" : (isEnabled ? "bg-warning" : "bg-danger")
+          }`}></div>
+          <span className="text-sm">
+            {selectedInput 
+              ? `Connected:` 
+              : (isEnabled ? "MIDI Ready" : "MIDI Disabled")
+            }
+          </span>
         </div>
         <Select
           placeholder="Select MIDI Input"

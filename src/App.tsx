@@ -4,11 +4,11 @@ import { MacroBuilder } from "./components/macro-builder";
 import { MidiLog } from "./components/midi-log";
 import { MacrosList } from "./components/macros-list";
 import { SettingsPage } from "./components/settings-page";
-import { MidiProvider } from "./contexts/midi-context";
 import { MacroDefinition, MacroTemplate } from "./types/macro";
 import { TemplatesGallery } from "./components/templates-gallery";
 import { TemplateManager } from "./components/template-manager";
 import { TemplateEditor } from "./components/template-editor";
+import { MidiDeviceModal } from "./components/midi-device-modal";
 import { useTemplates } from "./hooks/use-templates";
 import { Icon } from "@iconify/react";
 
@@ -354,7 +354,6 @@ export default function App() {
   };
 
   return (
-      <MidiProvider>
         <div className="min-h-screen bg-background p-4 md:p-8">
          
           
@@ -373,7 +372,9 @@ export default function App() {
               </Card>
             </div>
           </div>
+          
+          {/* MIDI Device Selection Modal */}
+          <MidiDeviceModal />
         </div>
-      </MidiProvider>
   );
 }

@@ -846,9 +846,6 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                         // Check if we should execute before actions
                         let mut should_execute_before = true;
                         
-                        // Use a fixed timeout for before_actions - 5 seconds
-                        const BEFORE_ACTION_COOLDOWN_MS: u64 = 5000;
-                        
                         // Use groupId (if available) instead of macro ID for tracking before actions
                         // This ensures all macros in the same encoder group share the same before_action_state
                         let state_key = if let Some(ref group_id) = group_id_clone {
@@ -861,16 +858,13 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                         };
 
                         // Check the before_action_states to see if we've recently executed these actions
+                        // Before actions should only run once per macro session (until after actions complete)
                         {
                             let before_action_states = APP_STATE.before_action_states.lock().unwrap();
-                            if let Some(state) = before_action_states.get(&state_key) {
-                                let elapsed = state.last_executed.elapsed();
-                                if elapsed < state.cooldown {
-                                    // Still in cooldown period, don't execute
+                            if before_action_states.contains_key(&state_key) {
+                                // Before actions already executed for this macro group session
                                     should_execute_before = false;
-                                    println!("Skipping before actions for macro group {} - cooldown period active ({:?} remaining)", 
-                                             state_key, state.cooldown - elapsed);
-                                }
+                                println!("Skipping before actions for macro group {} - already executed in current session", state_key);
                             }
                         }
                         
@@ -898,13 +892,13 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                 }
                             }
                             
-                            // Update the before_action_state cooldown logic
+                            // Mark before actions as executed for this macro group session
                             let mut before_action_states_guard = APP_STATE.before_action_states.lock().unwrap();
                             before_action_states_guard.insert(state_key.clone(), BeforeActionState {
                                     last_executed: std::time::Instant::now(),
-                                    cooldown: std::time::Duration::from_millis(BEFORE_ACTION_COOLDOWN_MS),
+                                    cooldown: std::time::Duration::from_secs(0), // No cooldown, just session tracking
                                 });
-                                println!("Updated before_action cooldown for macro group {}", state_key);
+                                println!("Marked before actions as executed for macro group session {}", state_key);
                         }
 
                         // Execute main action
@@ -933,14 +927,13 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                             }
                         }
                         
-                                                        // If after actions exist and there's a timeout, schedule them
-                                if let Some(after_actions) = after_actions {
-                                    if !after_actions.is_empty() && timeout.is_some() {
-                                        let timeout_ms = timeout.unwrap();
+                                                                                // If there's a timeout, schedule cleanup task (either for after actions or just cleanup)
+                        if let Some(timeout_value) = timeout {
+                            let timeout_ms = timeout_value;
                                         let _app_handle_after = app_handle_clone.clone();
                                         // Clone these for use in both the async block and local scope
                                         let macro_name_after = macro_name_clone.clone();
-                                        // Use group ID for after actions if available
+                            // Use group ID for cleanup if available
                                         let macro_id_after = if let Some(ref group_id) = group_id_clone {
                                             group_id.clone()
                                         } else {
@@ -949,19 +942,30 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                         // Make an additional clone for the closure
                                         let macro_name_for_task = macro_name_after.clone();
                                         let task_key = macro_id_after.clone();
+                            
+                            // Check if we have after actions to execute
+                            let has_after_actions = after_actions.as_ref().map_or(false, |actions| !actions.is_empty());
                                         
                                         // Spawn a new task to handle the timeout - but store its handle to cancel if needed
                                         let abort_handle = tokio::spawn(async move {
                                                                                 // Wait for the timeout
+                                if has_after_actions {
                                             println!("TIMEOUT START: Scheduled after actions with {}ms timeout for macro: {}", 
                                                 timeout_ms, macro_name_for_task);
+                                } else {
+                                    println!("TIMEOUT START: Scheduled cleanup with {}ms timeout for macro: {}", 
+                                        timeout_ms, macro_name_for_task);
+                                }
                                             let start_time = std::time::Instant::now();
                                     tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms as u64)).await;
                                     
-                                                                                // Execute after actions
+                                // Execute after actions if they exist
+                                if has_after_actions {
                                             let elapsed = start_time.elapsed();
                                             println!("TIMEOUT COMPLETE: Waited for {:?} of {}ms timeout, executing after actions for macro: {}", 
                                                 elapsed, timeout_ms, macro_name_for_task);
+                                    
+                                    if let Some(ref after_actions) = after_actions {
                                     for (i, action) in after_actions.iter().enumerate() {
                                         println!("Executing after action {} of type {:?}", i, action.action_type);
                                         
@@ -971,6 +975,12 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                             },
                                             Err(e) => eprintln!("Error executing after action {}: {}", i, e),
                                         }
+                                        }
+                                    }
+                                } else {
+                                    let elapsed = start_time.elapsed();
+                                    println!("TIMEOUT COMPLETE: Waited for {:?} of {}ms timeout, cleaning up macro session: {}", 
+                                        elapsed, timeout_ms, macro_name_for_task);
                                     }
                                     
                                                                     // Remove this macro from active_macros and before_action_states when complete
@@ -981,7 +991,11 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                     // Only remove if this is still the current abort handle
                                     // This prevents a newer task from being removed by an older one
                                     // that completed at the same time
+                                    if has_after_actions {
                                     println!("Cleaning up after_actions for macro: {}", macro_name_for_task);
+                                    } else {
+                                        println!("Cleaning up macro session for: {}", macro_name_for_task);
+                                    }
                                     active_macros.remove(&macro_id_after);
                                     
                                     // Also clean up the before_action_state so before actions can run again
@@ -1003,7 +1017,7 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                     // Double check that no other task was scheduled while we were setting up
                                     if let Some(_existing_active_macro) = active_macros.get(&task_key) {
                                         // Another task was already created (race condition), abort our new one
-                                        println!("Race condition detected: another after_actions task already exists for macro group {}", task_key);
+                                    println!("Race condition detected: another timeout task already exists for macro group {}", task_key);
                                         abort_handle.abort();
                                     } else {
                                         // Insert our new task using the task_key (group ID or macro ID)
@@ -1014,60 +1028,18 @@ async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_in
                                         });
                                         
                                         // Log with current time for tracking
+                                    if has_after_actions {
                                         println!("Scheduled new after_actions task at {:?} for macro group {} (timeout: {}ms)", 
+                                            now, task_key, timeout_ms);
+                            } else {
+                                        println!("Scheduled new cleanup task at {:?} for macro group {} (timeout: {}ms)", 
                                             now, task_key, timeout_ms);
                                     }
                                 }
-                            } else {
-                                // No after actions to schedule, but we need to clean up before_action_state
-                                // after a short delay to allow before actions to run again
-                                println!("No after actions scheduled, will clean up before_action_state for macro: {}", macro_name_clone);
-                                
-                                // Use shorter cleanup delay for macros without after actions
-                                const NO_AFTER_ACTIONS_CLEANUP_DELAY_MS: u64 = 1000; // 1 second
-                                
-                                let cleanup_state_key = if let Some(ref group_id) = group_id_clone {
-                                    group_id.clone()
-                                } else {
-                                    macro_id_clone.clone()
-                                };
-                                
-                                // Spawn a cleanup task
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(NO_AFTER_ACTIONS_CLEANUP_DELAY_MS)).await;
-                                    
-                                    // Clean up the before_action_state so before actions can run again
-                                    let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
-                                    if before_action_states.remove(&cleanup_state_key).is_some() {
-                                        println!("Cleaned up before_action_state after {}ms for macro group {} (no after actions)", 
-                                                 NO_AFTER_ACTIONS_CLEANUP_DELAY_MS, cleanup_state_key);
-                                    }
-                                });
                             }
                         } else {
-                            // No after actions exist at all, still need to clean up before_action_state
-                            println!("No after actions exist, will clean up before_action_state for macro: {}", macro_name_clone);
-                            
-                            // Use shorter cleanup delay for macros without after actions
-                            const NO_AFTER_ACTIONS_CLEANUP_DELAY_MS: u64 = 1000; // 1 second
-                            
-                            let cleanup_state_key = if let Some(ref group_id) = group_id_clone {
-                                group_id.clone()
-                            } else {
-                                macro_id_clone.clone()
-                            };
-                            
-                            // Spawn a cleanup task
-                            tokio::spawn(async move {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(NO_AFTER_ACTIONS_CLEANUP_DELAY_MS)).await;
-                                
-                                // Clean up the before_action_state so before actions can run again
-                                let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
-                                if before_action_states.remove(&cleanup_state_key).is_some() {
-                                    println!("Cleaned up before_action_state after {}ms for macro group {} (no after actions)", 
-                                             NO_AFTER_ACTIONS_CLEANUP_DELAY_MS, cleanup_state_key);
-                                }
-                            });
+                            // No timeout specified, before_action_state will persist until manually cleared
+                            println!("No timeout specified for macro: {} - before_action_state will persist until manually cleared", macro_name_clone);
                         }
                     });
                 }

@@ -551,546 +551,494 @@ fn list_midi_inputs_rust() -> Result<Vec<String>, String> {
 }
 
 // Start listening to a MIDI input by index
-#[tauri::command]
-async fn start_midi_listening_rust<R: Runtime>(app_handle: AppHandle<R>, port_index: usize) -> Result<(), String> {
-    // Make sure we clean up any existing connection
+// Add these type aliases at the top of your file (after imports)
+type MacroId = String;
+type GroupId = String;
+type TimestampMs = u64;
+
+// Add these new structures for better organization
+#[derive(Debug, Clone)]
+struct MidiData {
+    status: u8,
+    message_type: MidiMessageType,
+    channel: u8,
+    data1: u8,
+    data2: u8,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum MidiMessageType {
+    NoteOff,
+    NoteOn,
+    Aftertouch,
+    ControlChange,
+    ProgramChange,
+    ChannelPressure,
+    PitchBend,
+    Other,
+}
+
+// Add this macro for conditional logging
+#[cfg(feature = "midi-debug")]
+macro_rules! midi_log {
+    ($($arg:tt)*) => { println!($($arg)*); }
+}
+
+#[cfg(not(feature = "midi-debug"))]
+macro_rules! midi_log {
+    ($($arg:tt)*) => {};
+}
+
+// Helper function to create platform-specific MIDI errors
+fn create_midi_error(base_error: &str, err: impl std::fmt::Display) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        format!("{} on macOS: {}. Please ensure:\n\
+                1. Your app has permission in System Preferences > Security & Privacy > Privacy > Microphone\n\
+                2. Your app has permission in System Preferences > Security & Privacy > Privacy > Bluetooth (if using Bluetooth MIDI)\n\
+                3. The MIDI device is properly connected", base_error, err)
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!("{}: {}", base_error, err)
+    }
+}
+
+// Helper functions for the refactored MIDI listening
+fn cleanup_existing_connection() -> Result<(), String> {
     let mut connection_guard = APP_STATE.midi_connection.lock().unwrap();
     if connection_guard.is_some() {
         *connection_guard = None;
     }
-    drop(connection_guard); // Release lock
-    
-    // Get the port info from app state
+    Ok(())
+}
+
+fn validate_and_get_port_name(port_index: usize) -> Result<String, String> {
     let ports_guard = APP_STATE.midi_ports.lock().unwrap();
     if port_index >= ports_guard.len() {
-        return Err(format!("Port index {} out of range. Only {} ports available.", port_index, ports_guard.len()));
+        return Err(format!("Port index {} out of range. Only {} ports available.", 
+                          port_index, ports_guard.len()));
     }
-    let port_name = ports_guard[port_index].0.clone();
-    drop(ports_guard); // Release lock
+    Ok(ports_guard[port_index].0.clone())
+}
+
+fn create_midi_input() -> Result<MidiInput, String> {
+    MidiInput::new("opengrader-midi-listener")
+        .map_err(|e| create_midi_error("Failed to create MIDI listener", e))
+}
+
+fn parse_midi_message(message: &[u8]) -> Option<MidiData> {
+    if message.len() < 3 {
+        return None;
+    }
     
-    let midi_in = MidiInput::new("opengrader-midi-listener").map_err(|e| {
-        #[cfg(target_os = "macos")]
-        return format!("Failed to create MIDI listener on macOS: {}. Please ensure your app has the necessary permissions in System Preferences > Security & Privacy > Privacy > Microphone and Bluetooth.", e);
+    let status = message[0];
+    let message_type_u8 = status & 0xF0;
+    let channel = (status & 0x0F) + 1;
+    
+    let message_type = match message_type_u8 {
+        0x80 => MidiMessageType::NoteOff,
+        0x90 => MidiMessageType::NoteOn,
+        0xA0 => MidiMessageType::Aftertouch,
+        0xB0 => MidiMessageType::ControlChange,
+        0xC0 => MidiMessageType::ProgramChange,
+        0xD0 => MidiMessageType::ChannelPressure,
+        0xE0 => MidiMessageType::PitchBend,
+        _ => MidiMessageType::Other,
+    };
+    
+    Some(MidiData {
+        status,
+        message_type,
+        channel: channel as u8,
+        data1: message[1],
+        data2: message[2],
+    })
+}
+
+fn should_trigger_macro(macro_config: &MacroConfig, midi_data: &MidiData) -> bool {
+    if macro_config.midi_channel != midi_data.channel {
+        return false;
+    }
+    
+    match midi_data.message_type {
+        MidiMessageType::ControlChange => {
+            macro_config.midi_note == midi_data.data1 && 
+            macro_config.midi_value.map_or(false, |v| v == midi_data.data2)
+        },
+        // Add other message types as needed
+        _ => false,
+    }
+}
+
+fn calculate_trigger_delay(group_key: &str) -> Option<std::time::Duration> {
+    let settings = APP_STATE.global_settings.lock().unwrap();
+    let delay_ms = settings.macro_trigger_delay;
+    
+    if delay_ms == 0 {
+        return None;
+    }
+    
+    let mut last_group_triggers = APP_STATE.last_group_triggers.lock().unwrap();
+    let now = std::time::Instant::now();
+    
+    // Find the most recent trigger from a different group
+    let most_recent_different = last_group_triggers.iter()
+        .filter(|(k, _)| *k != group_key)
+        .max_by_key(|(_, time)| **time)
+        .map(|(_, time)| *time);
+    
+    let delay = if let Some(last_time) = most_recent_different {
+        let elapsed = now.duration_since(last_time);
+        let required_delay = std::time::Duration::from_millis(delay_ms);
         
-        #[cfg(not(target_os = "macos"))]
-        return e.to_string();
-    })?;
+        if elapsed < required_delay {
+            Some(required_delay - elapsed)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
+    // Update trigger time for this group
+    last_group_triggers.insert(group_key.to_string(), now);
+    
+    delay
+}
+
+async fn handle_macro_trigger<R: Runtime>(
+    macro_config: MacroConfig,
+    app_handle: AppHandle<R>,
+) {
+    let group_key = macro_config.groupId.as_ref()
+        .unwrap_or(&macro_config.id)
+        .clone();
+    
+    // Calculate and apply delay if needed
+    if let Some(delay) = calculate_trigger_delay(&group_key) {
+        midi_log!("Delaying macro trigger by {:?}", delay);
+        tokio::time::sleep(delay).await;
+    }
+    
+    midi_log!("Macro triggered: {} (timeout: {:?}ms)", 
+        macro_config.name, macro_config.timeout);
+    
+    // Execute any pending after actions from other macros
+    execute_pending_after_actions(&group_key, &app_handle).await;
+    
+    // Handle the current macro's state
+    cancel_existing_macro_task(&group_key);
+    
+    // Execute before actions if needed
+    if should_execute_before_actions(&group_key) {
+        execute_before_actions(&macro_config, &app_handle).await;
+    }
+    
+    // Execute main actions
+    execute_main_actions(&macro_config, &app_handle).await;
+    
+    // Schedule after actions if timeout is specified
+    if let Some(timeout) = macro_config.timeout {
+        schedule_after_actions(macro_config, app_handle, timeout).await;
+    }
+}
+
+async fn execute_pending_after_actions<R: Runtime>(
+    current_group_key: &str,
+    app_handle: &AppHandle<R>,
+) {
+    let macros_to_execute = {
+        let mut active_macros = APP_STATE.active_macros.lock().unwrap();
+        let registered_macros = APP_STATE.registered_macros.lock().unwrap();
+        
+        let mut result = Vec::new();
+        let mut keys_to_remove = Vec::new();
+        
+        for (key, _) in active_macros.iter() {
+            if key == current_group_key {
+                keys_to_remove.push(key.clone());
+                continue;
+            }
+            
+            if let Some(macro_config) = registered_macros.iter().find(|m| 
+                m.id == *key || m.groupId.as_ref().map_or(false, |g| g == key)
+            ) {
+                if macro_config.after_actions.as_ref().map_or(false, |a| !a.is_empty()) {
+                    result.push((key.clone(), macro_config.clone()));
+                    keys_to_remove.push(key.clone());
+                }
+            }
+        }
+        
+        // Abort and remove found tasks
+        for key in &keys_to_remove {
+            if let Some(active_macro) = active_macros.remove(key) {
+                active_macro.abort_handle.abort();
+            }
+        }
+        
+        result
+    };
+    
+    // Execute after actions
+    for (key, macro_config) in macros_to_execute {
+        if let Some(after_actions) = &macro_config.after_actions {
+            midi_log!("Executing pending after_actions for: {}", key);
+            
+            for (i, action) in after_actions.iter().enumerate() {
+                if let ActionType::Delay = action.action_type {
+                    if let Some(duration_ms) = action.action_params.duration {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms as u64)).await;
+                    }
+                } else {
+                    if let Err(e) = execute_action_safe(
+                        action.action_type.clone(),
+                        action.action_params.clone(),
+                        Some(app_handle.clone())
+                    ).await {
+                        eprintln!("Error executing after action {}: {}", i, e);
+                    }
+                }
+            }
+            
+            // Clean up before_action_state
+            APP_STATE.before_action_states.lock().unwrap().remove(&key);
+        }
+    }
+}
+
+fn cancel_existing_macro_task(group_key: &str) {
+    let mut active_macros = APP_STATE.active_macros.lock().unwrap();
+    if let Some(active_macro) = active_macros.remove(group_key) {
+        active_macro.abort_handle.abort();
+        midi_log!("Cancelled existing task for macro group: {}", group_key);
+    }
+}
+
+fn should_execute_before_actions(state_key: &str) -> bool {
+    let before_action_states = APP_STATE.before_action_states.lock().unwrap();
+    !before_action_states.contains_key(state_key)
+}
+
+async fn execute_before_actions<R: Runtime>(
+    macro_config: &MacroConfig,
+    app_handle: &AppHandle<R>,
+) {
+    if let Some(before_actions) = &macro_config.before_actions {
+        if before_actions.is_empty() {
+            return;
+        }
+        
+        midi_log!("Executing before actions for macro: {}", macro_config.name);
+        
+        for (i, action) in before_actions.iter().enumerate() {
+            if let ActionType::Delay = action.action_type {
+                if let Some(duration_ms) = action.action_params.duration {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms as u64)).await;
+                }
+            } else {
+                if let Err(e) = execute_action_safe(
+                    action.action_type.clone(),
+                    action.action_params.clone(),
+                    Some(app_handle.clone())
+                ).await {
+                    eprintln!("Error executing before action {}: {}", i, e);
+                }
+            }
+        }
+        
+        // Mark as executed
+        let state_key = macro_config.groupId.as_ref()
+            .unwrap_or(&macro_config.id)
+            .clone();
+        
+        APP_STATE.before_action_states.lock().unwrap().insert(
+            state_key,
+            BeforeActionState {
+                last_executed: std::time::Instant::now(),
+                cooldown: std::time::Duration::from_secs(0),
+            }
+        );
+    }
+}
+
+async fn execute_main_actions<R: Runtime>(
+    macro_config: &MacroConfig,
+    app_handle: &AppHandle<R>,
+) {
+    for (i, action) in macro_config.actions.iter().enumerate() {
+        midi_log!("Executing main action {} of type {:?}", i, action.action_type);
+        
+        if let ActionType::Delay = action.action_type {
+            if let Some(duration_ms) = action.action_params.duration {
+                tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms as u64)).await;
+            }
+        } else {
+            if let Err(e) = execute_action_safe(
+                action.action_type.clone(),
+                action.action_params.clone(),
+                Some(app_handle.clone())
+            ).await {
+                eprintln!("Error executing main action {}: {}", i, e);
+            }
+        }
+    }
+}
+
+async fn schedule_after_actions<R: Runtime>(
+    macro_config: MacroConfig,
+    app_handle: AppHandle<R>,
+    timeout_ms: u32,
+) {
+    let task_key = macro_config.groupId.as_ref()
+        .unwrap_or(&macro_config.id)
+        .clone();
+    
+    let has_after_actions = macro_config.after_actions
+        .as_ref()
+        .map_or(false, |a| !a.is_empty());
+    
+    let abort_handle = tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms as u64)).await;
+        
+        if has_after_actions {
+            if let Some(after_actions) = &macro_config.after_actions {
+                for (i, action) in after_actions.iter().enumerate() {
+                    if let ActionType::Delay = action.action_type {
+                        if let Some(duration_ms) = action.action_params.duration {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms as u64)).await;
+                        }
+                    } else {
+                        if let Err(e) = execute_action_safe(
+                            action.action_type.clone(),
+                            action.action_params.clone(),
+                            Some(app_handle.clone())
+                        ).await {
+                            eprintln!("Error executing after action {}: {}", i, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Clean up
+        APP_STATE.active_macros.lock().unwrap().remove(&task_key);
+        APP_STATE.before_action_states.lock().unwrap().remove(&task_key);
+    }).abort_handle();
+    
+    // Store the task
+    APP_STATE.active_macros.lock().unwrap().insert(
+        task_key,
+        ActiveMacro {
+            abort_handle,
+            last_triggered: std::time::Instant::now(),
+        }
+    );
+}
+
+fn emit_midi_event<R: Runtime>(
+    midi_data: &MidiData,
+    timestamp: TimestampMs,
+    app_handle: &AppHandle<R>,
+) {
+    let type_name = match midi_data.message_type {
+        MidiMessageType::NoteOff => "noteoff",
+        MidiMessageType::NoteOn => "noteon",
+        MidiMessageType::Aftertouch => "aftertouch",
+        MidiMessageType::ControlChange => "controlchange",
+        MidiMessageType::ProgramChange => "programchange",
+        MidiMessageType::ChannelPressure => "channelpressure",
+        MidiMessageType::PitchBend => "pitchbend",
+        MidiMessageType::Other => "other",
+    };
+    
+    let is_note = matches!(midi_data.message_type, MidiMessageType::NoteOn | MidiMessageType::NoteOff);
+    let is_cc = matches!(midi_data.message_type, MidiMessageType::ControlChange);
+    
+    let payload = RustMidiEvent {
+        status: midi_data.status,
+        data1: midi_data.data1,
+        data2: midi_data.data2,
+        timestamp,
+        type_name: type_name.to_string(),
+        channel: midi_data.channel,
+        note: if is_note { Some(midi_data.data1) } else { None },
+        velocity: if is_note { Some(midi_data.data2) } else { None },
+        controller: if is_cc { Some(midi_data.data1) } else { None },
+        value: if is_cc { Some(midi_data.data2) } else { None },
+    };
+    
+    if let Err(e) = app_handle.emit("rust-midi-event", payload) {
+        eprintln!("Failed to emit MIDI event: {}", e);
+    }
+}
+
+// Replace your existing start_midi_listening_rust function with this:
+#[tauri::command]
+async fn start_midi_listening_rust<R: Runtime>(
+    app_handle: AppHandle<R>, 
+    port_index: usize
+) -> Result<(), String> {
+    cleanup_existing_connection()?;
+    let port_name = validate_and_get_port_name(port_index)?;
+    let midi_in = create_midi_input()?;
+    
     let ports = midi_in.ports();
     if port_index >= ports.len() {
-        return Err(format!("Port index {} out of range. Only {} ports available.", port_index, ports.len()));
+        return Err(format!("Port index {} out of range. Only {} ports available.", 
+                          port_index, ports.len()));
     }
     
     let port = &ports[port_index];
-    
-    // Set up callback and connection
     let app_handle_clone = app_handle.clone();
+    
     let connection = midi_in.connect(port, "midi-connection", move |timestamp, message, _| {
-        // Process MIDI message
-        if message.len() >= 3 { // Basic check for message length
-            let status = message[0];
-            let data1 = message[1]; // Often Note or CC number
-            let data2 = message[2]; // Often Velocity or CC value
-            
-            let message_type_u8 = status & 0xF0;
-            let channel = (status & 0x0F) + 1; // MIDI channels 1-16
-
-            // Clone app_handle for use in the macro execution logic
-            let app_handle_for_macros = app_handle_clone.clone();
-
-            // Extract all registered macros first and release the lock
-            // This prevents borrowing issues in the async blocks
-            let macros_to_check: Vec<MacroConfig> = {
-                let registered_macros_guard = APP_STATE.registered_macros.lock().unwrap();
-                registered_macros_guard.clone() // Clone all macros to avoid borrowing issues
-            };
-            
-            // Now iterate over our cloned macros without holding the lock
-            for macro_config in macros_to_check.iter() {
-                // Match NoteOn/NoteOff (0x90 / 0x80) or ControlChange (0xB0)
-                let _is_note_message = message_type_u8 == 0x90 || message_type_u8 == 0x80;
-                let is_cc_message = message_type_u8 == 0xB0;
-
-                let mut trigger_match = false;
-
-                if macro_config.midi_channel == channel {
-                    // For MacroConfig, midi_note field is used for both note number and CC number
-                    if is_cc_message && macro_config.midi_note == data1 { // CC Number matches
-                        // Now check for CC Value if specified in macro_config
-                        if let Some(expected_value) = macro_config.midi_value {
-                            if data2 == expected_value { // CC Value matches
-                                trigger_match = true;
-                                println!(
-                                    "MIDI CC matched (w/ value): Macro '{}'. Ch: {}, CC_Num: {}, Expected_Val: {}, Received_Val: {}",
-                                    macro_config.name,
-                                    channel,
-                                    data1,
-                                    expected_value,
-                                    data2
-                                );
-                            }
-                        } else {
-                            // If midi_value is None, then match any value for this CC number
-                            // For your current use case, we might want to make midi_value non-optional for CC
-                            // or decide if None means "any value". For now, let's assume None means it doesn't match if we expect value-specific triggers.
-                            // OR, to match any value if midi_value is not set:
-                            // trigger_match = true;
-                            // println!(
-                            //     "MIDI CC matched (any value): Macro '{}'. Ch: {}, CC_Num: {}, Received_Val: {}",
-                            //     macro_config.name,
-                            //     channel,
-                            //     data1,
-                            //     data2
-                            // );
-                        }
-                    }
-                    // TODO: Add NoteOn/NoteOff matching if your MacroConfig supports it explicitly
-                    // else if is_note_message && macro_config.midi_note == data1 { // Note Match
-                    //     trigger_match = true;
-                    //     println!("MIDI Note matched for macro: {}. Channel: {}, Note: {}, Velocity: {}", macro_config.name, channel, data1, data2);
-                    // }
-                }
-
-                if trigger_match {
-                    // Determine which group key to use for delay tracking
-                    let group_key = if let Some(ref group_id) = macro_config.groupId {
-                        group_id.clone()
-                    } else {
-                        macro_config.id.clone()
-                    };
-                    
-                    // Check for trigger delay between different groups
-                    let should_delay = {
-                        let settings = APP_STATE.global_settings.lock().unwrap();
-                        let delay_ms = settings.macro_trigger_delay;
-                        
-                        if delay_ms > 0 {
-                            let mut last_group_triggers = APP_STATE.last_group_triggers.lock().unwrap();
-                            let now = std::time::Instant::now();
-                            
-                            // Check if we have any previous triggers from different groups
-                            let mut should_apply_delay = false;
-                            let mut delay_to_apply = None;
-                            
-                            // Look for the most recent trigger from a different group
-                            let mut most_recent_different_group = None;
-                            for (other_group_key, last_time) in last_group_triggers.iter() {
-                                if other_group_key != &group_key {
-                                    if let Some((_, prev_time)) = most_recent_different_group {
-                                        if *last_time > prev_time {
-                                            most_recent_different_group = Some((other_group_key.clone(), *last_time));
-                                        }
-                                    } else {
-                                        most_recent_different_group = Some((other_group_key.clone(), *last_time));
-                                    }
-                                }
-                            }
-                            
-                            // If we found a recent trigger from a different group, check if we need to delay
-                            if let Some((other_group, last_time)) = most_recent_different_group {
-                                let elapsed = now.duration_since(last_time);
-                                let required_delay = std::time::Duration::from_millis(delay_ms);
-                                
-                                if elapsed < required_delay {
-                                    let remaining_delay = required_delay - elapsed;
-                                    println!("Delaying macro trigger by {:?} due to recent trigger from different group '{}' (settings: {}ms, elapsed: {:?})", 
-                                             remaining_delay, other_group, delay_ms, elapsed);
-                                    delay_to_apply = Some(remaining_delay);
-                                    should_apply_delay = true;
-                                }
-                            }
-                            
-                            // Update the trigger time for this group regardless of delay
-                            last_group_triggers.insert(group_key.clone(), now);
-                            
-                            if should_apply_delay {
-                                delay_to_apply
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
-
-                    // We need to clone everything from macro_config to avoid borrowing issues in the async context
-                    let main_actions_clone = macro_config.actions.clone(); // Clone the vec of actions
-                    let macro_name_clone = macro_config.name.clone();
-                    let macro_id_clone = macro_config.id.clone();
-                    
-                    // Clone groupId too to prevent borrowing issues
-                    let group_id_clone = macro_config.groupId.clone();
-                    
-                    // Clone before/after actions and timeout
-                    let before_actions = macro_config.before_actions.clone();
-                    let after_actions = macro_config.after_actions.clone();
-                    let timeout = macro_config.timeout;
-                    
-                    // Execute the action in a separate thread/task to avoid blocking MIDI callback
-                    // And use the app_handle to call the command
-                    let app_handle_clone = app_handle_for_macros.clone();
-                    let _ = tauri::async_runtime::spawn(async move {
-                        // Apply delay if needed
-                        if let Some(delay) = should_delay {
-                            tokio::time::sleep(delay).await;
-                        }
-                        println!("Macro triggered: {} (timeout value: {:?}ms)", 
-                            macro_name_clone, 
-                            timeout);
-                        
-                                                                        // Determine which key to use for active macro lookup
-                        let active_macro_key = if let Some(ref group_id) = group_id_clone {
-                            // Use group ID if available
-                            group_id.clone()
-                        } else {
-                            // Fall back to individual macro ID
-                            macro_id_clone.clone()
-                        };
-                        
-                        // First, check if there are any active macros with pending after_actions
-                        let active_macros_to_execute: Vec<(String, MacroConfig)> = {
-                            // Get a clone of the active_macros
-                            let mut active_macros = APP_STATE.active_macros.lock().unwrap();
-                            let registered_macros = APP_STATE.registered_macros.lock().unwrap();
-                            
-                            // Find all active macros that are not part of this group/macro
-                            let mut macros_to_execute = Vec::new();
-                            let mut keys_to_remove = Vec::new();
-                            
-                            for (key, _active_macro) in active_macros.iter() {
-                                // Skip if this is the same macro/group we're currently triggering
-                                if key == &active_macro_key {
-                                    println!("Found current macro/group in active_macros, will be replaced: {}", key);
-                                    keys_to_remove.push(key.clone());
-                                    continue;
-                                }
-                                
-                                // Find the corresponding MacroConfig for this active macro
-                                if let Some(macro_config) = registered_macros.iter().find(|m| 
-                                    m.id == *key || m.groupId.as_ref().map_or(false, |g| g == key)
-                                ) {
-                                    // Only add if it has after actions
-                                    if let Some(ref after_actions) = macro_config.after_actions {
-                                        if !after_actions.is_empty() {
-                                            println!("Found another active macro that needs after_actions executed: {}", key);
-                                            macros_to_execute.push((key.clone(), macro_config.clone()));
-                                            keys_to_remove.push(key.clone());
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // Abort and remove all tasks we found
-                            for key in keys_to_remove {
-                                if let Some(active_macro) = active_macros.get(&key) {
-                                    println!("Aborting task for {}", key);
-                                    active_macro.abort_handle.abort();
-                                    active_macros.remove(&key);
-                                }
-                            }
-                            
-                            macros_to_execute
-                        };
-                        
-                        // Execute the after_actions for all found macros immediately
-                        for (key, macro_config) in active_macros_to_execute {
-                            if let Some(ref after_actions) = macro_config.after_actions {
-                                println!("Immediately executing after_actions for: {}", key);
-                                
-                                for (i, action) in after_actions.iter().enumerate() {
-                                    println!("Executing forced after action {} of type {:?}", i, action.action_type);
-                                    match execute_action_safe(action.action_type.clone(), action.action_params.clone(), Some(app_handle_clone.clone())).await {
-                                        Ok(_) => {
-                                            println!("Forced after action {} executed successfully", i);
-                                        },
-                                        Err(e) => eprintln!("Error executing forced after action {}: {}", i, e),
-                                    }
-                                }
-                                
-                                // Clean up any before_action_state
-                                let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
-                                if before_action_states.remove(&key).is_some() {
-                                    println!("Removed before_action_state for macro group {}", key);
-                                }
-                            }
-                        }
-                        
-                        // Now handle the current macro's active state
-                        {
-                            let mut active_macros = APP_STATE.active_macros.lock().unwrap();
-                            
-                            // Check for existing active macros in this group (should be removed by now but let's be safe)
-                            if let Some(active_macro) = active_macros.get(&active_macro_key) {
-                                // This macro group is already active
-                                println!("Repeat/group trigger for macro group: {} (resetting timeout: {:?}ms)", 
-                                    active_macro_key, timeout);
-                                
-                                // Abort the scheduled after_actions task and log how long it had been running
-                                let time_since_last_trigger = active_macro.last_triggered.elapsed();
-                                println!("Aborting after_actions task after running for {:?} of {:?}ms timeout", 
-                                    time_since_last_trigger, timeout);
-                                active_macro.abort_handle.abort();
-                                
-                                // Remove the entry so we completely replace it
-                                active_macros.remove(&active_macro_key);
-                                
-                                println!("Removed previous macro group entry to prevent multiple after_actions");
-                            }
-                        }
-                        
-                        // Note: We intentionally do NOT modify the before_action_state here.
-                        // The before action protection logic below will handle whether to execute or skip.
-                        
-                        {
-                        }
-                        
-                        // Check if we should execute before actions
-                        let mut should_execute_before = true;
-                        
-                        // Use groupId (if available) instead of macro ID for tracking before actions
-                        // This ensures all macros in the same encoder group share the same before_action_state
-                        let state_key = if let Some(ref group_id) = group_id_clone {
-                            // Use group ID for tracking if it exists
-                            println!("Using group ID {} for before action state tracking", group_id);
-                            group_id.clone() // Clone the borrowed value
-                        } else {
-                            // Fall back to macro ID for standalone macros
-                            macro_id_clone.clone()
-                        };
-
-                        // Check the before_action_states to see if we've recently executed these actions
-                        // Before actions should only run once per macro session (until after actions complete)
-                        {
-                            let before_action_states = APP_STATE.before_action_states.lock().unwrap();
-                            if before_action_states.contains_key(&state_key) {
-                                // Before actions already executed for this macro group session
-                                    should_execute_before = false;
-                                println!("Skipping before actions for macro group {} - already executed in current session", state_key);
-                            }
-                        }
-                        
-                        // Execute before actions if allowed and they exist
-                        if should_execute_before && before_actions.is_some() && !before_actions.as_ref().unwrap().is_empty() {
-                            println!("Executing before actions for macro: {}", macro_name_clone);
-                            
-                            for (i, action_def) in before_actions.as_ref().unwrap().iter().enumerate() {
-                                println!("Executing before action {} of type {:?}", i, action_def.action_type);
-                                if let ActionType::Delay = action_def.action_type {
-                                    if let Some(duration_ms) = action_def.action_params.duration {
-                                        println!("Starting delay of {}ms in before action chain", duration_ms);
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms as u64)).await;
-                                        println!("Delay of {}ms completed in before action chain", duration_ms);
-                                    } else {
-                                        eprintln!("Delay action missing duration at before_action {}", i);
-                                    }
-                                } else {
-                                    match execute_action_safe(action_def.action_type.clone(), action_def.action_params.clone(), Some(app_handle_clone.clone())).await {
-                                    Ok(_) => {
-                                        println!("Before action {} executed successfully", i);
-                                    },
-                                    Err(e) => eprintln!("Error executing before action {}: {}", i, e),
-                                }
-                                }
-                            }
-                            
-                            // Mark before actions as executed for this macro group session
-                            let mut before_action_states_guard = APP_STATE.before_action_states.lock().unwrap();
-                            before_action_states_guard.insert(state_key.clone(), BeforeActionState {
-                                    last_executed: std::time::Instant::now(),
-                                    cooldown: std::time::Duration::from_secs(0), // No cooldown, just session tracking
-                                });
-                                println!("Marked before actions as executed for macro group session {}", state_key);
-                        }
-
-                        // Execute main action
-                        // println!("Executing main action of type {:?} for macro: {}", action_type_clone, macro_name_clone);
-                        
-                        // Iterate through the cloned main actions
-                        for (i, action_def) in main_actions_clone.iter().enumerate() {
-                            println!("Executing main action {} of type {:?} for macro: {}", i, action_def.action_type, macro_name_clone);
-                            if let ActionType::Delay = action_def.action_type { // CHECK FOR DELAY
-                                println!("**************************************************************************");
-                                println!("FOUND DELAY ACTION! This message should appear in the console if Delay is being properly detected.");
-                                println!("Action def: {:?}", action_def);
-                                println!("**************************************************************************");
-                                if let Some(duration_ms) = action_def.action_params.duration {
-                                    println!("Starting delay of {}ms in main action chain", duration_ms);
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(duration_ms as u64)).await;
-                                    println!("Delay of {}ms completed in main action chain", duration_ms);
-                                } else {
-                                    eprintln!("Delay action missing duration in main_actions at index {} for macro {}", i, macro_name_clone);
-                                }
-                            } else { // For other actions, call execute_action
-                                match execute_action_safe(action_def.action_type.clone(), action_def.action_params.clone(), Some(app_handle_clone.clone())).await {
-                                    Ok(_) => println!("Main action {} executed successfully for macro: {}", i, macro_name_clone),
-                                    Err(e) => eprintln!("Error executing main action {} for macro {}: {}", i, macro_name_clone, e),
-                                }
-                            }
-                        }
-                        
-                                                                                // If there's a timeout, schedule cleanup task (either for after actions or just cleanup)
-                        if let Some(timeout_value) = timeout {
-                            let timeout_ms = timeout_value;
-                                        let _app_handle_after = app_handle_clone.clone();
-                                        // Clone these for use in both the async block and local scope
-                                        let macro_name_after = macro_name_clone.clone();
-                            // Use group ID for cleanup if available
-                                        let macro_id_after = if let Some(ref group_id) = group_id_clone {
-                                            group_id.clone()
-                                        } else {
-                                            macro_id_clone.clone()
-                                        };
-                                        // Make an additional clone for the closure
-                                        let macro_name_for_task = macro_name_after.clone();
-                                        let task_key = macro_id_after.clone();
-                            
-                            // Check if we have after actions to execute
-                            let has_after_actions = after_actions.as_ref().map_or(false, |actions| !actions.is_empty());
-                                        
-                                        // Spawn a new task to handle the timeout - but store its handle to cancel if needed
-                                        let abort_handle = tokio::spawn(async move {
-                                                                                // Wait for the timeout
-                                if has_after_actions {
-                                            println!("TIMEOUT START: Scheduled after actions with {}ms timeout for macro: {}", 
-                                                timeout_ms, macro_name_for_task);
-                                } else {
-                                    println!("TIMEOUT START: Scheduled cleanup with {}ms timeout for macro: {}", 
-                                        timeout_ms, macro_name_for_task);
-                                }
-                                            let start_time = std::time::Instant::now();
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms as u64)).await;
-                                    
-                                // Execute after actions if they exist
-                                if has_after_actions {
-                                            let elapsed = start_time.elapsed();
-                                            println!("TIMEOUT COMPLETE: Waited for {:?} of {}ms timeout, executing after actions for macro: {}", 
-                                                elapsed, timeout_ms, macro_name_for_task);
-                                    
-                                    if let Some(ref after_actions) = after_actions {
-                                    for (i, action) in after_actions.iter().enumerate() {
-                                        println!("Executing after action {} of type {:?}", i, action.action_type);
-                                        
-                                        match execute_action_safe(action.action_type.clone(), action.action_params.clone(), Some(_app_handle_after.clone())).await {
-                                            Ok(_) => {
-                                                println!("After action {} executed successfully", i);
-                                            },
-                                            Err(e) => eprintln!("Error executing after action {}: {}", i, e),
-                                        }
-                                        }
-                                    }
-                                } else {
-                                    let elapsed = start_time.elapsed();
-                                    println!("TIMEOUT COMPLETE: Waited for {:?} of {}ms timeout, cleaning up macro session: {}", 
-                                        elapsed, timeout_ms, macro_name_for_task);
-                                    }
-                                    
-                                                                    // Remove this macro from active_macros and before_action_states when complete
-                                let mut active_macros = APP_STATE.active_macros.lock().unwrap();
-                                
-                                // Check if this specific task is still the one registered
-                                if let Some(_existing_macro) = active_macros.get(&macro_id_after) {
-                                    // Only remove if this is still the current abort handle
-                                    // This prevents a newer task from being removed by an older one
-                                    // that completed at the same time
-                                    if has_after_actions {
-                                    println!("Cleaning up after_actions for macro: {}", macro_name_for_task);
-                                    } else {
-                                        println!("Cleaning up macro session for: {}", macro_name_for_task);
-                                    }
-                                    active_macros.remove(&macro_id_after);
-                                    
-                                    // Also clean up the before_action_state so before actions can run again
-                                    let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
-                                    if before_action_states.remove(&macro_id_after).is_some() {
-                                        println!("Removed before_action_state for macro group {}", macro_id_after);
-                                    }
-                                    
-                                    println!("Removed macro {} from active macros after completion", macro_name_for_task);
-                                } else {
-                                    println!("Macro {} already removed from active_macros, possibly by a newer trigger", macro_name_for_task);
-                                }
-                                }).abort_handle();
-                                
-                                // Update active_macros with this new task
-                                {
-                                    let mut active_macros = APP_STATE.active_macros.lock().unwrap();
-                                    
-                                    // Double check that no other task was scheduled while we were setting up
-                                    if let Some(_existing_active_macro) = active_macros.get(&task_key) {
-                                        // Another task was already created (race condition), abort our new one
-                                    println!("Race condition detected: another timeout task already exists for macro group {}", task_key);
-                                        abort_handle.abort();
-                                    } else {
-                                        // Insert our new task using the task_key (group ID or macro ID)
-                                        let now = std::time::Instant::now();
-                                        active_macros.insert(task_key.clone(), ActiveMacro {
-                                            abort_handle,
-                                            last_triggered: now,
-                                        });
-                                        
-                                        // Log with current time for tracking
-                                    if has_after_actions {
-                                        println!("Scheduled new after_actions task at {:?} for macro group {} (timeout: {}ms)", 
-                                            now, task_key, timeout_ms);
-                            } else {
-                                        println!("Scheduled new cleanup task at {:?} for macro group {} (timeout: {}ms)", 
-                                            now, task_key, timeout_ms);
-                                    }
-                                }
-                            }
-                        } else {
-                            // No timeout specified, before_action_state will persist until manually cleared
-                            println!("No timeout specified for macro: {} - before_action_state will persist until manually cleared", macro_name_clone);
-                        }
-                    });
-                }
-            }
-
-            // Emit raw MIDI event to frontend (as before)
-            let frontend_message_type = match message_type_u8 {
-                0x80 => "noteoff",
-                0x90 => "noteon",
-                0xA0 => "aftertouch",
-                0xB0 => "controlchange",
-                0xC0 => "programchange",
-                0xD0 => "channelpressure",
-                0xE0 => "pitchbend",
-                _ => "other"
-            };
-            
-            // Create message payload
-            let payload = RustMidiEvent {
-                status,
-                data1,
-                data2,
-                timestamp,
-                type_name: frontend_message_type.to_string(),
-                channel: channel as u8,
-                // Additional fields for specific message types
-                note: if message_type_u8 == 0x90 || message_type_u8 == 0x80 { Some(data1) } else { None },
-                velocity: if message_type_u8 == 0x90 || message_type_u8 == 0x80 { Some(data2) } else { None },
-                controller: if message_type_u8 == 0xB0 { Some(data1) } else { None },
-                value: if message_type_u8 == 0xB0 { Some(data2) } else { None },
-            };
-            
-            // Emit to frontend
-            if let Err(e) = app_handle_for_macros.emit("rust-midi-event", payload) {
-                eprintln!("Failed to emit MIDI event: {}", e);
+        // Early exit for invalid messages
+        let midi_data = match parse_midi_message(message) {
+            Some(data) => data,
+            None => return,
+        };
+        
+        // Early exit if no macros registered
+        if APP_STATE.registered_macros.lock().unwrap().is_empty() {
+            return;
+        }
+        
+        let app_handle_for_macros = app_handle_clone.clone();
+        
+        // Get macros and settings in a single lock acquisition
+        let (macros_to_check, _settings) = {
+            let registered_macros = APP_STATE.registered_macros.lock().unwrap();
+            let settings = APP_STATE.global_settings.lock().unwrap();
+            (registered_macros.clone(), settings.clone())
+        };
+        
+        // Check for macro triggers
+        for macro_config in &macros_to_check {
+            if should_trigger_macro(macro_config, &midi_data) {
+                midi_log!("MIDI trigger matched for macro: {}", macro_config.name);
+                
+                let macro_clone = macro_config.clone();
+                let app_handle = app_handle_for_macros.clone();
+                
+                // Spawn async task to handle the trigger
+                let _ = tauri::async_runtime::spawn(async move {
+                    handle_macro_trigger(macro_clone, app_handle).await;
+                });
             }
         }
-    }, ())
-    .map_err(|e| {
-        #[cfg(target_os = "macos")]
-        return format!("Failed to connect to MIDI device on macOS: {}. Please ensure:\n1. Your app has permission in System Preferences > Security & Privacy > Privacy > Microphone\n2. Your app has permission in System Preferences > Security & Privacy > Privacy > Bluetooth (if using Bluetooth MIDI)\n3. The MIDI device is properly connected and recognized by the system", e);
         
-        #[cfg(not(target_os = "macos"))]
-        return e.to_string();
-    })?;
+        // Always emit the raw MIDI event
+        emit_midi_event(&midi_data, timestamp, &app_handle_for_macros);
+        
+    }, ())
+    .map_err(|e| create_midi_error("Failed to connect to MIDI device", e))?;
     
-    // Store connection in app state
-    let mut connection_guard = APP_STATE.midi_connection.lock().unwrap();
-    *connection_guard = Some(connection);
+    // Store connection and notify frontend
+    APP_STATE.midi_connection.lock().unwrap().replace(connection);
     
-    // Also emit a message to let frontend know connection succeeded
     if let Err(e) = app_handle.emit("midi-status", format!("Connected to MIDI device: {}", port_name)) {
         eprintln!("Failed to emit MIDI status: {}", e);
     }

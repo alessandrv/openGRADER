@@ -1675,7 +1675,23 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   // Helper function for showing trigger details
   function getTriggerDescription(trigger: MacroDefinition["trigger"]): string {
     if (trigger.type === "noteon") {
-      return `Note ${trigger.note} Ch ${trigger.channel}`;
+      let description = `Note ${trigger.note} Ch ${trigger.channel}`;
+      if (trigger.value !== undefined) {
+        description += ` / ${trigger.value}`;
+      }
+      if (trigger.direction) {
+        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
+      }
+      return description;
+    } else if (trigger.type === "noteoff") {
+      let description = `Note Off ${trigger.note} Ch ${trigger.channel}`;
+      if (trigger.value !== undefined) {
+        description += ` / ${trigger.value}`;
+      }
+      if (trigger.direction) {
+        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
+      }
+      return description;
     } else if (trigger.type === "controlchange") {
       let description = `CC ${trigger.controller} Ch ${trigger.channel}`;
       if (trigger.value !== undefined) {
@@ -1698,6 +1714,12 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         return "warning";
       case "encoder-click":
         return "secondary";
+      case "note-increment":
+        return "primary";
+      case "note-decrement":
+        return "warning";
+      case "noteoff":
+        return "danger";
       default:
         return "primary";
     }

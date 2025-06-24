@@ -499,10 +499,24 @@ export const BulkEncoderInitializer: React.FC<BulkEncoderInitializerProps> = ({
       return description;
     }
     if (trigger.type === "noteon") {
-      return `Note ${trigger.note} Ch ${trigger.channel}`;
+      let description = `Note ${trigger.note} Ch ${trigger.channel}`;
+      if (trigger.value !== undefined) {
+        description += ` / ${trigger.value}`;
+      }
+      if (trigger.direction) {
+        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
+      }
+      return description;
     }
     if (trigger.type === "noteoff") {
-      return `Note Off ${trigger.note} Ch ${trigger.channel}`;
+      let description = `Note Off ${trigger.note} Ch ${trigger.channel}`;
+      if (trigger.value !== undefined) {
+        description += ` / ${trigger.value}`;
+      }
+      if (trigger.direction) {
+        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
+      }
+      return description;
     }
     return trigger.type;
   };

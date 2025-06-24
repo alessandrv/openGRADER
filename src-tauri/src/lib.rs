@@ -578,15 +578,12 @@ enum MidiMessageType {
     Other,
 }
 
-// Add this macro for conditional logging
-#[cfg(feature = "midi-debug")]
+// Macro for MIDI logging (can be easily disabled by commenting out the println! line)
 macro_rules! midi_log {
-    ($($arg:tt)*) => { println!($($arg)*); }
-}
-
-#[cfg(not(feature = "midi-debug"))]
-macro_rules! midi_log {
-    ($($arg:tt)*) => {};
+    ($($arg:tt)*) => { 
+        // Comment out the next line to disable MIDI logging
+        println!($($arg)*); 
+    }
 }
 
 // Helper function to create platform-specific MIDI errors
@@ -666,6 +663,16 @@ fn should_trigger_macro(macro_config: &MacroConfig, midi_data: &MidiData) -> boo
         MidiMessageType::ControlChange => {
             macro_config.midi_note == midi_data.data1 && 
             macro_config.midi_value.map_or(false, |v| v == midi_data.data2)
+        },
+        MidiMessageType::NoteOn => {
+            // For Note On messages, match the note number and optionally the velocity
+            macro_config.midi_note == midi_data.data1 && 
+            macro_config.midi_value.map_or(true, |v| v == midi_data.data2)
+        },
+        MidiMessageType::NoteOff => {
+            // For Note Off messages, match the note number and optionally the velocity
+            macro_config.midi_note == midi_data.data1 && 
+            macro_config.midi_value.map_or(true, |v| v == midi_data.data2)
         },
         // Add other message types as needed
         _ => false,
@@ -900,7 +907,8 @@ async fn schedule_after_actions<R: Runtime>(
         .as_ref()
         .map_or(false, |a| !a.is_empty());
     
-    let abort_handle = tauri::async_runtime::spawn(async move {
+    let task_key_for_closure = task_key.clone();
+    let abort_handle = tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms as u64)).await;
         
         if has_after_actions {
@@ -924,8 +932,8 @@ async fn schedule_after_actions<R: Runtime>(
         }
         
         // Clean up
-        APP_STATE.active_macros.lock().unwrap().remove(&task_key);
-        APP_STATE.before_action_states.lock().unwrap().remove(&task_key);
+        APP_STATE.active_macros.lock().unwrap().remove(&task_key_for_closure);
+        APP_STATE.before_action_states.lock().unwrap().remove(&task_key_for_closure);
     }).abort_handle();
     
     // Store the task

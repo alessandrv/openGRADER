@@ -900,7 +900,7 @@ async fn schedule_after_actions<R: Runtime>(
         .as_ref()
         .map_or(false, |a| !a.is_empty());
     
-    let abort_handle = tokio::spawn(async move {
+    let abort_handle = tauri::async_runtime::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms as u64)).await;
         
         if has_after_actions {

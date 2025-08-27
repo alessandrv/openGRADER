@@ -50,8 +50,8 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
           newTriggerValue.value = lastReceivedMessage.value;
         }
         
-        // Add direction for encoder if specified and it's a controlchange
-        if (forceDirection && lastReceivedMessage.type === "controlchange") {
+        // Add direction for encoder if specified and it's a controlchange or note
+        if (forceDirection && (lastReceivedMessage.type === "controlchange" || lastReceivedMessage.type === "noteon" || lastReceivedMessage.type === "noteoff")) {
           newTriggerValue.direction = forceDirection;
         }
         
@@ -96,7 +96,10 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
     if (value.type === "noteon" || value.type === "noteoff") {
       description = value.type === "noteon" ? "Note On" : "Note Off";
       if (value.note !== undefined) details.push(`Note ${value.note}`);
-      if (value.type === "noteon" && value.value !== undefined) details.push(`Vel ${value.value}`);
+      if (value.value !== undefined) details.push(`Vel ${value.value}`);
+      if (value.direction) {
+        details.push(value.direction === "increment" ? "Inc (↑)" : "Dec (↓)");
+      }
     } else if (value.type === "controlchange") {
       description = "Control Change";
       if (value.controller !== undefined) details.push(`CC ${value.controller}`);
@@ -113,13 +116,18 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{description}</span>
-            {value.direction && value.type === "controlchange" && (
+            {value.direction && (value.type === "controlchange" || value.type === "noteon" || value.type === "noteoff") && (
               <span className={`text-xs px-2 py-0.5 rounded ${
                 value.direction === "increment" 
                   ? "bg-success-100 text-success-700" 
                   : "bg-warning-100 text-warning-700"
               }`}>
                 {value.direction === "increment" ? "Increment" : "Decrement"}
+              </span>
+            )}
+            {!value.direction && (value.type === "controlchange" || value.type === "noteon" || value.type === "noteoff") && (
+              <span className="text-xs px-2 py-0.5 rounded bg-secondary-100 text-secondary-700">
+                Click
               </span>
             )}
           </div>

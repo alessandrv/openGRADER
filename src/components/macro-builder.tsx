@@ -730,7 +730,31 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
               
               <MacroTypeSelector 
                 value={macroType}
-                onChange={setMacroType}
+                onChange={(newType) => {
+                  const prevType = macroType;
+                  setMacroType(newType);
+                  
+                  // Auto-transfer trigger when switching from standard to encoder modes
+                  if (prevType === "standard" && (newType === "encoder" || newType === "encoder-click")) {
+                    if (midiTrigger) {
+                      // Transfer the standard trigger to increment trigger and add direction
+                      const triggerWithDirection = { 
+                        ...midiTrigger, 
+                        direction: "increment" as const
+                      };
+                      setMidiTrigger(triggerWithDirection);
+                    }
+                  }
+                  
+                  // Clear direction when switching back to standard
+                  if ((prevType === "encoder" || prevType === "encoder-click") && newType === "standard") {
+                    if (midiTrigger?.direction) {
+                      const triggerWithoutDirection = { ...midiTrigger };
+                      delete triggerWithoutDirection.direction;
+                      setMidiTrigger(triggerWithoutDirection);
+                    }
+                  }
+                }}
               />
               
              

@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Button, Card, Input, Modal, addToast, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, useDisclosure, Checkbox } from "@heroui/react";
+import { Button, Card, Input, Modal, addToast, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, useDisclosure, Checkbox, Tooltip } from "@heroui/react";
 import { Icon } from "@iconify/react";
+import * as motion from "motion/react-client";
 import { MacroTemplate, MacroDefinition, Action, MacroCategory } from "../types/macro";
 import { MidiTriggerSelector } from "./midi-trigger-selector";
 import { getCursorPosition } from "../lib/tauri";
+import { KeySelectorModal } from "./key-selector-modal";
+import { BulkTemplateInitializer } from "./bulk-template-initializer";
 
 interface TemplateApplyProps {
   template: MacroTemplate;
@@ -30,6 +33,15 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
   const [coordCaptureActive, setCoordCaptureActive] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [activeCoordinateField, setActiveCoordinateField] = useState<string | null>(null);
+  const [isKeySelectorOpen, setIsKeySelectorOpen] = useState(false);
+  const [activeKeyField, setActiveKeyField] = useState<string | null>(null);
+  const [showBulkInitializer, setShowBulkInitializer] = useState(false);
+  
+  // Bulk initializer state
+  const [bulkCreateFn, setBulkCreateFn] = useState<(() => void) | null>(null);
+  const [canBulkCreate, setCanBulkCreate] = useState(false);
+  const [bulkPreviewCount, setBulkPreviewCount] = useState(0);
+  const [bulkValidationMessage, setBulkValidationMessage] = useState("");
   
   // Initialize form on mount
   useEffect(() => {
@@ -139,6 +151,16 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
     });
   };
   
+  // Handle key selection for keypress actions
+  const handleKeySelect = (key: string | string[]) => {
+    if (activeKeyField) {
+      // Handle both single key and multiple key selection
+      const selectedKey = Array.isArray(key) ? key[0] : key;
+      handleFieldChange(activeKeyField, selectedKey);
+      setActiveKeyField(null);
+    }
+  };
+  
   // Handle key detection for keypress actions
   const handleKeyDetection = (fieldKey: string) => {
     setIsDetectingKey(true);
@@ -182,6 +204,38 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
   const isEncoderTemplate = ["encoder-increment", "encoder-decrement", "encoder-click"].includes(template.type);
   const hasDecrementActions = isEncoderTemplate && template.decrementActions && template.decrementActions.length > 0;
   const hasClickActions = isEncoderTemplate && template.clickActions && template.clickActions.length > 0;
+  
+  // Handle bulk creation of macros
+  const handleBulkCreate = (macros: MacroDefinition[]) => {
+    // Add all macros to localStorage
+    const existingMacros: MacroDefinition[] = JSON.parse(localStorage.getItem("midiMacros") || "[]");
+    
+    // Filter out existing macros with the same groupId as any of our new macros
+    let filteredExistingMacros = existingMacros;
+    const newGroupIds = macros.filter(m => m.groupId).map(m => m.groupId);
+    
+    if (newGroupIds.length > 0) {
+      // Remove any existing macros with the same groupId to avoid duplication
+      filteredExistingMacros = existingMacros.filter(m => !newGroupIds.includes(m.groupId));
+    }
+    
+    const updatedMacros = [...filteredExistingMacros, ...macros];
+    localStorage.setItem("midiMacros", JSON.stringify(updatedMacros));
+    
+    // Show success message
+    addToast({
+      title: "Bulk Creation Complete",
+      description: `Successfully created ${macros.length} macros from template`,
+      color: "success"
+    });
+    
+    // Transition back to main view and close
+    setShowBulkInitializer(false);
+    // Small delay to allow animation to complete before calling onApplyTemplate
+    setTimeout(() => {
+      onApplyTemplate(macros[0]);
+    }, 300);
+  };
   
   // Apply the template to create a new macro
   const applyTemplate = (editBeforeSaving: boolean) => {
@@ -640,20 +694,35 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-sm font-medium">{getParamFriendlyName(paramName)}</label>
+              <div className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={() => {
+                    setActiveKeyField(fieldKey);
+                    setIsKeySelectorOpen(true);
+                  }}
+                  startContent={<Icon icon="lucide:keyboard" />}
+                  className="h-8"
+                >
+                  Select Key
+                </Button>
               <Button
                 size="sm"
                 variant="flat"
                 onPress={() => handleKeyDetection(fieldKey)}
                 isDisabled={isDetectingKey}
-                className="h-7"
+                  startContent={<Icon icon="lucide:search" />}
+                  className="h-8"
               >
                 {isDetectingKey ? "Detecting..." : "Detect Key"}
               </Button>
+              </div>
             </div>
             <Input
-              placeholder="e.g. a, b, Enter, Space"
+              placeholder="Click 'Select Key' to choose a key or 'Detect Key' to press a key"
               value={editableFields[fieldKey] || action.params[paramName] || ""}
-              onValueChange={(value) => handleFieldChange(fieldKey, value)}
+              isReadOnly
               size="sm"
             />
           </div>
@@ -701,15 +770,55 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
   };
   
   return (
+    <motion.div layout className="w-full h-full">
     <Card className="p-4">
-      <div className="mb-6">
-        <h2 className="text-xl font-bold">Create Macro from Template</h2>
+        <motion.div layout className="mb-6">
+          <h2 className="text-xl font-bold">
+            {showBulkInitializer ? "Bulk Initialize from Template" : "Create Macro from Template"}
+          </h2>
         <p className="text-foreground-500 text-sm">
-          {template.description || `Apply the "${template.name}" template to create a new macro`}
+            {showBulkInitializer 
+              ? "Create multiple macros from this template with different key combinations and MIDI triggers"
+              : (template.description || `Apply the "${template.name}" template to create a new macro`)
+            }
         </p>
-      </div>
+        </motion.div>
       
-      <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2">
+        <motion.div layout className="space-y-6">
+          {showBulkInitializer ? (
+            <motion.div
+              key="bulk-initializer"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="max-h-[70vh] overflow-y-auto pr-2"
+            >
+              <BulkTemplateInitializer
+                template={template}
+                categories={categories}
+                onCancel={() => setShowBulkInitializer(false)}
+                onBulkCreate={handleBulkCreate}
+                onCreateReady={(createFn, canCreate, previewCount, validationMessage) => {
+                  setBulkCreateFn(() => createFn);
+                  setCanBulkCreate(canCreate);
+                  setBulkPreviewCount(previewCount);
+                  setBulkValidationMessage(validationMessage);
+                }}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              key="template-form"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="max-h-[70vh] overflow-y-auto pr-2"
+            >
+              {/* Basic Information Card */}
+              <Card className="p-4 mb-4">
+                <div className="space-y-4">
         <div>
           <Input
             label="Macro Name"
@@ -734,6 +843,13 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
             </select>
           </div>
         )}
+                </div>
+              </Card>
+              
+              {/* MIDI Triggers Card */}
+              <Card className="p-4 mb-4">
+                <div className="space-y-4">
+                  <h3 className="font-medium text-lg">MIDI Triggers</h3>
         
         {/* MIDI trigger selectors - show different selectors based on template type */}
         {isEncoderTemplate ? (
@@ -786,6 +902,13 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
             />
           </div>
         )}
+                </div>
+              </Card>
+              
+              {/* Action Parameters Card */}
+              <Card className="p-4">
+                <div className="space-y-4">
+                  <h3 className="font-medium text-lg">Action Parameters</h3>
         
         {/* Group editable parameters by section */}
         {(() => {
@@ -808,19 +931,19 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
                 
                 return (
                   <div key={section} className="space-y-4">
-                    <h3 className="font-medium">
+                              <h4 className="font-medium text-md text-foreground-600 border-b border-default-200 pb-2">
                       {section === "before" ? "Before Actions" : 
                        section === "main" ? (isEncoder ? "Increment Actions" : "Main Actions") : 
                        section === "decrement" ? "Decrement Actions" :
                        section === "click" ? "Click Actions" : "After Actions"}
-                    </h3>
+                              </h4>
                     
                     {editableParamsForSection.map(param => {
                       const action = findTemplateAction(param.id, section);
                       if (!action || param.params.length === 0) return null;
                       
                       return (
-                        <Card key={param.id} className="p-3">
+                                  <Card key={param.id} className="p-3 border border-default-200">
                           <div className="mb-3">
                             <span className="font-medium capitalize">{action.type}</span>
                             <p className="text-xs text-foreground-500 mt-1">
@@ -848,18 +971,90 @@ export const TemplateApply: React.FC<TemplateApplyProps> = ({
           );
         })()}
       </div>
-      
-      <div className="flex justify-end gap-2 mt-6">
+              </Card>
+            </motion.div>
+          )}
+        </motion.div>
+        
+        <motion.div layout className="flex justify-between items-center mt-6">
+          {!showBulkInitializer ? (
+            <>
+              <Button 
+                variant="flat" 
+                color="secondary" 
+                onPress={() => setShowBulkInitializer(true)}
+                startContent={<Icon icon="lucide:layers" />}
+              >
+                Bulk Initialize
+              </Button>
+              
+              <div className="flex gap-2">
         <Button variant="flat" onPress={onCancel}>
           Cancel
         </Button>
         <Button variant="flat" color="primary" onPress={() => applyTemplate(true)}>
-          Edit Before Saving
+                  Edit Before Creating
         </Button>
         <Button color="primary" onPress={() => applyTemplate(false)}>
-          Save Macro
+                  Create Macro
         </Button>
       </div>
+            </>
+          ) : (
+            <div className="flex justify-between w-full">
+              <Button 
+                variant="flat" 
+                onPress={() => setShowBulkInitializer(false)}
+                startContent={<Icon icon="lucide:arrow-left" />}
+              >
+                Back to Template
+              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  variant="flat" 
+                  onPress={onCancel}
+                >
+                  Cancel
+                </Button>
+                <Tooltip 
+                  content={bulkValidationMessage || "Unknown error"}
+                  isDisabled={canBulkCreate}
+                  color="danger"
+                  placement="top"
+                >
+                  <span className={!canBulkCreate ? "cursor-not-allowed" : ""}>
+                    <Button 
+                      color="primary"
+                      onPress={bulkCreateFn || (() => {})}
+                      isDisabled={!canBulkCreate}
+                      className={!canBulkCreate ? "pointer-events-none" : ""}
+                    >
+                      Create {bulkPreviewCount} Macros
+                    </Button>
+                  </span>
+                </Tooltip>
+              </div>
+            </div>
+          )}
+        </motion.div>
+        
+      
     </Card>
+
+      {/* Key Selector Modal */}
+      <KeySelectorModal
+        isOpen={isKeySelectorOpen}
+        onOpenChange={setIsKeySelectorOpen}
+        onKeySelect={(key) => {
+          // Handle both single key and array types
+          if (Array.isArray(key)) {
+            handleKeySelect(key);
+          } else {
+            handleKeySelect(key);
+          }
+        }}
+        currentKey={activeKeyField ? (editableFields[activeKeyField] || "") : ""}
+      />
+    </motion.div>
   );
 }; 

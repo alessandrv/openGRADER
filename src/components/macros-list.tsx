@@ -1,16 +1,25 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import { Button, Card, Chip, Divider, Switch, addToast, Accordion, AccordionItem, useDisclosure, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Popover, PopoverTrigger, PopoverContent } from "@heroui/react";
+import { Button, Card, Chip, Divider, Switch, addToast, Accordion, AccordionItem, useDisclosure, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Popover, PopoverTrigger, PopoverContent, Tooltip } from "@heroui/react";
 import { Icon } from "@iconify/react";
 import { invoke } from '@tauri-apps/api/core';
 import { MacroDefinition, Action, MacroCategory } from "../types/macro";
 import { registerMacro, MacroConfig, ActionType, ActionParams, MacroAction } from "../lib/tauri";
-import DraggableList from 'react-draggable-list';
 import { motion, AnimatePresence, Reorder, useDragControls, LayoutGroup } from "framer-motion";
 
 // Extended type for macros with additional properties for the UI
 interface ExtendedMacroDefinition extends MacroDefinition {
   isGroupRoot?: boolean;
   groupItems?: MacroDefinition[];
+}
+
+// Context menu item interface
+interface ContextMenuItem {
+  key: string;
+  label: string;
+  description?: string;
+  icon: string;
+  color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
+  onPress: () => void;
 }
 
 interface MacrosListProps {
@@ -201,7 +210,7 @@ const EncoderGroupTabs: React.FC<EncoderGroupTabsProps> = ({
 export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTemplate }): JSX.Element => {
   const [macros, setMacros] = useState<MacroDefinition[]>([]);
   const [activeMacros, setActiveMacros] = useState<Set<string>>(new Set());
-  const [expandedMacros, setExpandedMacros] = useState<Set<string>>(new Set());
+  // Removed expandedMacros state - no more expansion needed
   const [categories, setCategories] = useState<MacroCategory[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [showCategoryManager, setShowCategoryManager] = useState<boolean>(false);
@@ -248,6 +257,21 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   
   // Also track the target macro when dragging for reordering
   const [dragTargetMacro, setDragTargetMacro] = useState<string | null>(null);
+  
+  // Context menu state - now using HeroUI dropdown
+  const [contextMenu, setContextMenu] = useState<{
+    isOpen: boolean;
+    macro?: MacroDefinition;
+    isPageLevel: boolean;
+    x: number;
+    y: number;
+  }>({
+    isOpen: false,
+    macro: undefined,
+    isPageLevel: false,
+    x: 0,
+    y: 0
+  });
   
   // Calculate the displayed macro count, grouping by groupId
   const displayedMacroCount = React.useMemo(() => {
@@ -352,6 +376,24 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       transition: { duration: 0.2, ease: "easeIn" }
     }
   };
+
+  // Context menu handlers
+  const handleContextMenu = useCallback((e: React.MouseEvent, macro?: MacroDefinition) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setContextMenu({
+      isOpen: true,
+      macro,
+      isPageLevel: !macro,
+      x: e.clientX,
+      y: e.clientY
+    });
+  }, []);
+  
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(prev => ({ ...prev, isOpen: false }));
+  }, []);
 
   // Custom CSS styles for drag and drop (minimal now, mostly handled by Framer Motion)
   React.useEffect(() => {
@@ -931,17 +973,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     setExpandedCategories(expanded);
   };
 
-  const toggleExpanded = (id: string) => {
-    setExpandedMacros(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(id)) {
-        newSet.delete(id);
-      } else {
-        newSet.add(id);
-      }
-      return newSet;
-    });
-  };
+  // Removed toggleExpanded function - no more expansion needed
 
   // Add function to check for MIDI trigger conflicts
   const findConflictingMacros = (macro: MacroDefinition): MacroDefinition[] => {
@@ -1722,6 +1754,72 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         return "danger";
       default:
         return "primary";
+    }
+  }
+
+  // Helper function to convert action type to readable display name
+  function getActionTypeDisplayName(actionType: string): string {
+    switch (actionType) {
+      case "keypress":
+        return "Key Press";
+      case "keyrelease":
+        return "Key Release";
+      case "mouseclick":
+        return "Mouse Click";
+      case "mouserelease":
+        return "Mouse Release";
+      case "mousemove":
+        return "Mouse Move";
+      case "mousedrag":
+        return "Mouse Drag";
+      case "delay":
+        return "Delay";
+      default:
+        return actionType.charAt(0).toUpperCase() + actionType.slice(1);
+    }
+  }
+
+  // Helper function to get detailed action information for tooltips
+  function getDetailedActionInfo(action: Action): string {
+    switch (action.type) {
+      case "keypress":
+        let keyInfo = `Key: ${action.params.key}`;
+        if (action.params.modifiers?.length) {
+          keyInfo += `\nModifiers: ${action.params.modifiers.join(' + ')}`;
+        }
+        if (action.params.hold) {
+          keyInfo += `\nHold: ${action.params.duration || 500}ms`;
+        }
+        return keyInfo;
+      case "keyrelease":
+        return `Key: ${action.params.key}`;
+      case "mouseclick":
+        if (action.params.button?.startsWith("scroll")) {
+          return `Button: ${action.params.button}\nAmount: ${action.params.amount || 3}`;
+        } else {
+          let clickInfo = `Button: ${action.params.button}`;
+          if (action.params.x !== undefined && action.params.y !== undefined) {
+            clickInfo += `\nPosition: (${action.params.x}, ${action.params.y})`;
+          }
+          if (action.params.hold) {
+            clickInfo += `\nHold: ${action.params.duration || 500}ms`;
+          }
+          return clickInfo;
+        }
+      case "mouserelease":
+        return `Button: ${action.params.button}`;
+      case "mousemove":
+        if (action.params.relative) {
+          return `Direction: ${action.params.direction || 'right'}\nDistance: ${action.params.distance || 100}px\nDuration: ${action.params.duration || 500}ms`;
+        } else {
+          return `Position: (${action.params.x}, ${action.params.y})\nDuration: ${action.params.duration || 500}ms`;
+        }
+      case "mousedrag":
+        return `Direction: ${action.params.direction}\nDistance: ${action.params.distance}px\nDuration: ${action.params.duration || 500}ms`;
+      case "delay":
+        return `Duration: ${action.params.duration || 500}ms`;
+      default:
+        return "Unknown action type";
     }
   }
 
@@ -2699,12 +2797,40 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     const isPresetColor = presetColors.includes(color);
     
     if (isPresetColor) {
-      return <div className={`category-color category-color-${color}`}></div>;
+      // Use Tailwind CSS classes for preset colors
+      const colorMap: Record<string, string> = {
+        "red": "bg-red-500",
+        "rose": "bg-rose-500", 
+        "pink": "bg-pink-500",
+        "fuchsia": "bg-fuchsia-500",
+        "purple": "bg-purple-500",
+        "violet": "bg-violet-500",
+        "indigo": "bg-indigo-500",
+        "blue": "bg-blue-500",
+        "sky": "bg-sky-500",
+        "cyan": "bg-cyan-500",
+        "teal": "bg-teal-500",
+        "emerald": "bg-emerald-500",
+        "green": "bg-green-500",
+        "lime": "bg-lime-500",
+        "yellow": "bg-yellow-500",
+        "amber": "bg-amber-500",
+        "orange": "bg-orange-500",
+        "coral": "bg-orange-400",
+        "salmon": "bg-orange-300",
+        "crimson": "bg-red-600"
+      };
+      
+      return (
+        <div 
+          className={`w-6 h-6 rounded-full border-2 border-white shadow-sm ${colorMap[color] || 'bg-gray-500'}`}
+        ></div>
+      );
     } else {
       // Custom hex color
       return (
         <div 
-          className="category-color"
+          className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
           style={{ backgroundColor: color }}
         ></div>
       );
@@ -2723,7 +2849,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     
     if (isPresetColor) {
       return {
-        className: `bg-${color}-50 hover:bg-${color}-100`,
+        className: `bg-${color}-50 hover:bg-${color}-100 transition-colors duration-200`,
         style: {}
       };
     } else {
@@ -3103,11 +3229,102 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       });
     }
   };
+  
+  // Get context menu items based on context
+  const getContextMenuItems = useCallback((): ContextMenuItem[] => {
+    if (contextMenu.macro) {
+      // Macro-specific context menu
+      const macro = contextMenu.macro;
+      return [
+        {
+          key: 'edit',
+          label: 'Edit Macro',
+          description: 'Edit this macro',
+          icon: 'lucide:edit',
+          color: 'primary' as const,
+          onPress: () => {
+            onEditMacro(macro);
+            closeContextMenu();
+          }
+        },
+        {
+          key: 'delete',
+          label: 'Delete Macro',
+          description: 'Delete this macro',
+          icon: 'lucide:trash-2',
+          color: 'danger' as const,
+          onPress: () => {
+            setDeletePopoverOpen(macro.id);
+            closeContextMenu();
+          }
+        },
+        ...(onCreateTemplate ? [{
+          key: 'template',
+          label: 'Create Template',
+          description: 'Create a template from this macro',
+          icon: 'lucide:copy-plus',
+          color: 'secondary' as const,
+          onPress: () => {
+            onCreateTemplate(macro);
+            closeContextMenu();
+          }
+        }] : []),
+        {
+          key: 'category',
+          label: 'Change Category',
+          description: 'Move this macro to a different category',
+          icon: 'lucide:folder',
+          color: 'warning' as const,
+          onPress: () => {
+            handleAssignCategory(macro);
+            closeContextMenu();
+          }
+        }
+      ];
+    } else {
+      // Page-level context menu
+      return [
+        {
+          key: 'add-category',
+          label: 'Add Category',
+          description: 'Create a new category',
+          icon: 'lucide:folder-plus',
+          color: 'primary' as const,
+          onPress: () => {
+            setShowCategoryManager(true);
+            closeContextMenu();
+          }
+        },
+        {
+          key: 'import',
+          label: 'Import Macros',
+          description: 'Import macros from a file',
+          icon: 'lucide:upload',
+          color: 'secondary' as const,
+          onPress: () => {
+            handleImportClick();
+            closeContextMenu();
+          }
+        },
+        {
+          key: 'export',
+          label: 'Export Macros',
+          description: 'Export all your macros',
+          icon: 'lucide:download',
+          color: 'primary' as const,
+          onPress: () => {
+            handleExportMacros();
+            closeContextMenu();
+          }
+        }
+      ];
+    }
+  }, [contextMenu.macro, closeContextMenu, onEditMacro, onCreateTemplate, handleImportClick, handleExportMacros]);
 
 
   if (macros.length === 0) {
     return (
-      <div className="">
+      <div className="" onContextMenu={(e) => handleContextMenu(e)}>
       {/* SVG Filter Definition for Thanos Snap effect */}
       <svg xmlns="http://www.w3.org/2000/svg" style={{ display: 'none' }}>
         <defs>
@@ -3463,35 +3680,44 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                           }
                           
                           return (
-                            React.createElement((DraggableList as any), {
-                              itemKey: "id",
-                              template: (MacroItem as any),
-                              list: processedMacros,
-                              onMoveEnd: (newList: ExtendedMacroDefinition[]) => {
+                            <Reorder.Group
+                              axis="y"
+                              values={processedMacros}
+                              onReorder={(newList) => {
                                 // Save the new order to state and localStorage
                                 const newOrder = newList.map(macro => macro.groupId || macro.id);
                                 const updatedOrder = { ...macroOrder, [category.id]: newOrder };
                                 setMacroOrder(updatedOrder);
                                 localStorage.setItem("macroOrder", JSON.stringify(updatedOrder));
-                              },
-                              commonProps: {
-                                activeMacros,
-                                expandedMacros,
-                                onToggleExpanded: toggleExpanded,
-                                onToggleMacro: handleToggleMacro,
-                                onEditMacro,
-                                onCreateTemplate,
-                                onDeleteMacro: handleDeleteMacro,
-                                handleAssignCategory,
-                                getTriggerDescription,
-                                getActionSummary,
-                                getChipColor,
-                                deletePopoverOpen,
-                                setDeletePopoverOpen
-                              },
-                              springConfig: { stiffness: 500, damping: 80 }, // More responsive drag
-                              container: () => document.body
-                            })
+                              }}
+                              className="space-y-2"
+                            >
+                              {processedMacros.map((macro) => (
+                                <Reorder.Item
+                                  key={macro.groupId || macro.id}
+                                  value={macro}
+                                  className="cursor-move"
+                                >
+                                  <MacroItem
+                                    macro={macro}
+                                    activeMacros={activeMacros}
+                                    onToggleMacro={handleToggleMacro}
+                                    onEditMacro={onEditMacro}
+                                    onCreateTemplate={onCreateTemplate}
+                                    onDeleteMacro={handleDeleteMacro}
+                                    handleAssignCategory={handleAssignCategory}
+                                    getTriggerDescription={getTriggerDescription}
+                                    getActionSummary={getActionSummary}
+                                    getChipColor={getChipColor}
+                                    getActionTypeDisplayName={getActionTypeDisplayName}
+                                    getDetailedActionInfo={getDetailedActionInfo}
+                                    deletePopoverOpen={deletePopoverOpen}
+                                    setDeletePopoverOpen={setDeletePopoverOpen}
+                                    handleContextMenu={handleContextMenu}
+                                  />
+                                </Reorder.Item>
+                              ))}
+                            </Reorder.Group>
                           );
                         })()}
                       </div>
@@ -3508,7 +3734,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   }
 
   return (
-    <div className={` ${isDraggingActive ? 'dragging-active' : ''}`}>
+    <div className={` ${isDraggingActive ? 'dragging-active' : ''}`} onContextMenu={(e) => handleContextMenu(e)}>
       {/* SVG Filter Definition for Thanos Snap effect */}
       <svg xmlns="http://www.w3.org/2000/svg" style={{ display: 'none' }}>
         <defs>
@@ -3628,6 +3854,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                   type: 'category',
                   category: category.id
                 })}
+                onContextMenu={(e) => handleContextMenu(e)}
                 data-category-id={category.id}
               >
                 <div 
@@ -3666,7 +3893,7 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                         handleEditCategory(category);
                       }}
                     >
-                      <Icon icon="lucide:edit" className="text-foreground-500" />
+                      <Icon icon="lucide:edit" className="text-primary" />
                                   </Button>
                                 )}
                   
@@ -3854,34 +4081,44 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
                           }
                           
                           return (
-                            React.createElement((DraggableList as any), {
-                              itemKey: "id",
-                              template: (MacroItem as any),
-                              list: processedMacros,
-                              onMoveEnd: (newList: ExtendedMacroDefinition[]) => {
+                            <Reorder.Group
+                              axis="y"
+                              values={processedMacros}
+                              onReorder={(newList) => {
                                 // Save the new order to state and localStorage
                                 const newOrder = newList.map(macro => macro.groupId || macro.id);
                                 const updatedOrder = { ...macroOrder, [category.id]: newOrder };
                                 setMacroOrder(updatedOrder);
                                 localStorage.setItem("macroOrder", JSON.stringify(updatedOrder));
-                              },
-                              commonProps: {
-                                activeMacros,
-                                expandedMacros,
-                                onToggleExpanded: toggleExpanded,
-                                onToggleMacro: handleToggleMacro,
-                                onEditMacro,
-                                onCreateTemplate,
-                                onDeleteMacro: handleDeleteMacro,
-                                handleAssignCategory,
-                                getTriggerDescription,
-                                getActionSummary,
-                                getChipColor,
-                                deletePopoverOpen,
-                                setDeletePopoverOpen
-                              },
-                              container: () => document.body
-                            })
+                              }}
+                              className="space-y-2"
+                            >
+                              {processedMacros.map((macro) => (
+                                <Reorder.Item
+                                  key={macro.groupId || macro.id}
+                                  value={macro}
+                                  className="cursor-move"
+                                >
+                                  <MacroItem
+                                    macro={macro}
+                                    activeMacros={activeMacros}
+                                    onToggleMacro={handleToggleMacro}
+                                    onEditMacro={onEditMacro}
+                                    onCreateTemplate={onCreateTemplate}
+                                    onDeleteMacro={handleDeleteMacro}
+                                    handleAssignCategory={handleAssignCategory}
+                                    getTriggerDescription={getTriggerDescription}
+                                    getActionSummary={getActionSummary}
+                                    getChipColor={getChipColor}
+                                    getActionTypeDisplayName={getActionTypeDisplayName}
+                                    getDetailedActionInfo={getDetailedActionInfo}
+                                    deletePopoverOpen={deletePopoverOpen}
+                                    setDeletePopoverOpen={setDeletePopoverOpen}
+                                    handleContextMenu={handleContextMenu}
+                                  />
+                                </Reorder.Item>
+                              ))}
+                            </Reorder.Group>
                           );
                         })()}
                       </div>
@@ -4262,25 +4499,35 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
               <ModalHeader>Assign Category</ModalHeader>
               <ModalBody>
                 {currentEditMacro && (
-                  <p className="mb-4">
-                    Assign <span className="font-medium">{currentEditMacro.name}</span> to a category:
+                  <p className="my-4">
+                    Assign <span className="font-large">{currentEditMacro.name}</span> to a category:
                   </p>
                 )}
                 <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {categories.map((category) => (
-                    <Button
-                      key={category.id}
-                      variant="flat"
-                      className="w-full justify-start"
-                      color={category.color as any}
-                      onPress={() => {
-                        handleSaveCategoryAssignment(category.id);
-                        onCloseModal(); // Close this modal after saving
-                      }}
-                    >
-                      {category.name}
-                    </Button>
-                  ))}
+                  {/* Category options */}
+                  {categories.map((category) => {
+                    const isCurrentCategory = currentEditMacro?.categoryId === category.id;
+                    return (
+                      <Button
+                        key={category.id}
+                        variant="light"
+                        className=""
+                        onPress={() => {
+                          handleSaveCategoryAssignment(category.id);
+                          onCloseModal();
+                        }}
+                        isDisabled={isCurrentCategory}
+                      >
+                        <div className="flex items-center gap-2">
+                          {renderCategoryColor(category.color)}
+                          <span className="font-medium">{category.name}</span>
+                          {isCurrentCategory && (
+                            <Chip size="sm" variant="flat" color="primary">Current</Chip>
+                          )}
+                        </div>
+                      </Button>
+                    );
+                  })}
                 </div>
               </ModalBody>
               <ModalFooter>
@@ -4342,6 +4589,59 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
           }}
         </ModalContent>
       </Modal>
+      
+      {/* Context Menu - Now using HeroUI Dropdown */}
+      <Dropdown 
+        isOpen={contextMenu.isOpen} 
+        onOpenChange={(open) => {
+          if (!open) {
+            closeContextMenu();
+          }
+        }}
+        placement="bottom-start"
+        shouldCloseOnInteractOutside={() => true}
+        classNames={{
+          base: "before:bg-default-200", // change arrow background
+          content:
+            "py-1 px-1 border border-default-200 bg-black",
+        }}
+      >
+        <DropdownTrigger>
+          <div 
+            className="fixed pointer-events-none bg-black"
+            
+            style={{
+              left: contextMenu.x,
+              top: contextMenu.y,
+              width: '1px',
+              height: '1px'
+            }}
+          />
+        </DropdownTrigger>
+        <DropdownMenu 
+        
+          aria-label="Context menu"
+          variant="flat"
+          className="min-w-[200px]"
+          onAction={(key) => {
+            const item = getContextMenuItems().find(item => item.key === key);
+            if (item) {
+              item.onPress();
+            }
+          }}
+        >
+          {getContextMenuItems().map((item) => (
+            <DropdownItem
+              key={item.key}
+              description={item.description}
+              startContent={<Icon icon={item.icon} className={`text-${item.color || 'default'}`} />}
+              color={item.color}
+            >
+              {item.label}
+            </DropdownItem>
+          ))}
+        </DropdownMenu>
+      </Dropdown>
     </div>
   );
 };
@@ -4373,12 +4673,12 @@ const MacroDropZone: React.FC<MacroDropZoneProps> = ({
       scale: 1,
       transition: { duration: 0.2, ease: "easeOut" }
     },
-    active: { 
-      backgroundColor: "rgba(var(--primary-rgb), 0.1)",
-      borderColor: "rgba(var(--primary-rgb), 0.3)",
-      scale: 1.02,
-      transition: { duration: 0.2, ease: "easeOut" }
-    }
+          active: { 
+        backgroundColor: "rgba(var(--primary-rgb), 0.1)",
+        borderColor: "rgba(var(--primary-rgb), 0.3)",
+        scale: 1.02,
+        transition: { duration: 0.2, ease: "easeOut" }
+      }
   };
 
   return (
@@ -4423,40 +4723,30 @@ const MacroDropZone: React.FC<MacroDropZoneProps> = ({
   );
 };
 
-// MacroItem component for DraggableList
+// MacroItem component for Reorder
 interface MacroItemProps {
-  item: ExtendedMacroDefinition;
-  itemSelected: number;
-  dragHandleProps: object;
-  commonProps: {
-    activeMacros: Set<string>;
-    expandedMacros: Set<string>;
-    onToggleExpanded: (id: string) => void;
-    onToggleMacro: (id: string, isActive: boolean) => void;
-    onEditMacro: (macro: MacroDefinition) => void;
-    onCreateTemplate?: (macro: MacroDefinition) => void;
-    onDeleteMacro: (id: string) => void;
-    handleAssignCategory: (macro: MacroDefinition) => void;
-    getTriggerDescription: (trigger: MacroDefinition["trigger"]) => string;
-    getActionSummary: (action: Action) => string;
-    getChipColor: (type?: string) => "primary" | "secondary" | "warning" | "danger";
-    deletePopoverOpen: string | null;
-    setDeletePopoverOpen: React.Dispatch<React.SetStateAction<string | null>>;
-  };
+  macro: ExtendedMacroDefinition;
+  activeMacros: Set<string>;
+  onToggleMacro: (id: string, isActive: boolean) => void;
+  onEditMacro: (macro: MacroDefinition) => void;
+  onCreateTemplate?: (macro: MacroDefinition) => void;
+  onDeleteMacro: (id: string) => void;
+  handleAssignCategory: (macro: MacroDefinition) => void;
+  getTriggerDescription: (trigger: MacroDefinition["trigger"]) => string;
+  getActionSummary: (action: Action) => string;
+  getChipColor: (type?: string) => "primary" | "secondary" | "warning" | "danger";
+  getActionTypeDisplayName: (actionType: string) => string;
+  getDetailedActionInfo: (action: Action) => string;
+  deletePopoverOpen: string | null;
+  setDeletePopoverOpen: React.Dispatch<React.SetStateAction<string | null>>;
+  handleContextMenu: (e: React.MouseEvent, macro?: MacroDefinition) => void;
 }
 
 class MacroItem extends React.Component<MacroItemProps> {
-  getDragHeight() {
-    // Return the height of the macro when being dragged
-    return 110; // Adjust this value based on your design
-  }
-
   render() {
-    const { item: macro, itemSelected, dragHandleProps, commonProps } = this.props;
     const { 
+      macro,
       activeMacros, 
-      expandedMacros, 
-      onToggleExpanded, 
       onToggleMacro,
       onEditMacro,
       onCreateTemplate,
@@ -4465,13 +4755,16 @@ class MacroItem extends React.Component<MacroItemProps> {
       getTriggerDescription,
       getActionSummary,
       getChipColor,
+      getActionTypeDisplayName,
+      getDetailedActionInfo,
       deletePopoverOpen,
-      setDeletePopoverOpen
-    } = commonProps;
+      setDeletePopoverOpen,
+      handleContextMenu
+    } = this.props;
     
-    const scale = itemSelected * 0.05 + 1;
-    const shadow = itemSelected * 5 + 1;
-    const dragged = itemSelected !== 0;
+    const scale = 1;
+    const shadow = 1;
+    const dragged = false;
     
     // Define motion variants for macro cards
     const macroCardVariants = {
@@ -4515,68 +4808,170 @@ class MacroItem extends React.Component<MacroItemProps> {
           <Card 
             id={macro.groupId ? `macro-${macro.groupId}` : `macro-${macro.id}`}
             className="macro-card"
+            onContextMenu={(e) => handleContextMenu(e, macro)}
           >
-            <div className="p-4">
+            <div className="p-3">
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <motion.span 
                       className="drag-handle cursor-grab" 
-                      {...dragHandleProps}
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.95 }}
                     >
                       <Icon icon="lucide:grip-vertical" className="w-4 h-4" />
                     </motion.span>
-                    <h3 className="text-lg font-medium">
+                    <h3 className="text-base font-medium">
                       {macro.name.replace(/ \(.*\)$/, "")}
                     </h3>
                   </div>
-                  <motion.div 
-                    className="flex flex-wrap gap-2 mt-2"
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.1, duration: 0.3 }}
-                  >
-                    {macro.groupItems?.map((groupMacro, index) => (
-                      <motion.div
-                        key={groupMacro.id}
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: 0.1 + index * 0.05, duration: 0.2 }}
+                  {/* Show MIDI triggers inline for grouped macros - compact view */}
+                  <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-foreground-500">
+                    {/* Before Actions Icon - only once at the beginning */}
+                    {macro.groupItems?.[0]?.beforeActions && macro.groupItems[0].beforeActions.length > 0 && (
+                      <Tooltip
+                        content={
+                          <div className="p-2">
+                            <div className="font-medium mb-2">Before Actions ({macro.groupItems[0].beforeActions.length})</div>
+                            <div className="text-xs space-y-1">
+                              {macro.groupItems[0].beforeActions.map((action, idx) => (
+                                <div key={idx}> {getActionSummary(action)}</div>
+                              ))}
+                              
+                            </div>
+                          </div>
+                        }
+                        placement="top"
+                        color="primary"
+                        delay={500}
+                        closeDelay={100}
                       >
                         <Chip 
+                          size="sm" 
                           variant="flat" 
-                          color={getChipColor(groupMacro.type)}
-                          className="text-xs"
+                          color="success"
+                          className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
                         >
-                          {groupMacro.type ? 
-                            groupMacro.type.replace("encoder-", "").charAt(0).toUpperCase() + 
-                            groupMacro.type.replace("encoder-", "").slice(1) 
-                            : "Standard"}
+                          <Icon icon="lucide:arrow-left" className="w-3 h-3" />
                         </Chip>
-                      </motion.div>
+                      </Tooltip>
+                    )}
+                    
+                    {/* Dot separator after before actions */}
+                    {macro.groupItems?.[0]?.beforeActions && macro.groupItems[0].beforeActions.length > 0 && (
+                      <span className="text-foreground-300 mx-1">•</span>
+                    )}
+                    
+                    {macro.groupItems?.map((groupMacro, index) => (
+                      <div key={groupMacro.id} className="flex items-center gap-1">
+                        
+                        
+                        <Tooltip
+                          content={
+                            <div className="p-2">
+                              <div className="text-sm ">
+                                <div className="border-b border-white-200 pb-1">
+                                  <div className="font-medium text-white">Main Actions ({groupMacro.actions.length})</div>
+                                  <div className="border-b border-white-200 pb-1">
+
+                                  <div className="text-xs opacity-80">
+                                    {getTriggerDescription(groupMacro.trigger)}
+                                  </div>
+                                  </div>
+                                  <div className="text-xs opacity-80">
+                                    {groupMacro.actions.map((action, idx) => (
+                                      <div key={idx}> {getActionSummary(action)}</div>
+                                    ))}
+                                    
+                                  </div>
+                                </div>
+                                
+                                {groupMacro.timeout && (
+                                  <div className="text-xs opacity-60">
+                                    <strong>Timeout:</strong> {groupMacro.timeout}ms
+                                  </div>
+                                )}
+                                
+                                {/* MIDI Trigger Description */}
+                                 
+                                
+                                
+                              </div>
+                            </div>
+                          }
+                          placement="top"
+                          color="primary"
+                          delay={500}
+                          closeDelay={100}
+                        >
+                          <Chip 
+                            size="sm" 
+                            variant="flat" 
+                            color={getChipColor(groupMacro.type)}
+                            className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
+                          >
+                            {groupMacro.type === "encoder-increment" ? (
+                              <Icon icon="lucide:rotate-cw" className="w-3 h-3" />
+                            ) : groupMacro.type === "encoder-decrement" ? (
+                              <Icon icon="lucide:rotate-ccw" className="w-3 h-3" />
+                            ) : groupMacro.type === "encoder-click" ? (
+                              <Icon icon="lucide:mouse-pointer-click" className="w-3 h-3" />
+                            ) : (
+                              <Icon icon="lucide:circle" className="w-3 h-3" />
+                            )}
+                            <span className="text-xs">
+                              {groupMacro.type === "encoder-increment" ? "" : 
+                               groupMacro.type === "encoder-decrement" ? "" : 
+                               groupMacro.type === "encoder-click" ? "" : 
+                               "Standard"}
+                            </span>
+                          </Chip>
+                        </Tooltip>
+                        {index < (macro.groupItems?.length || 0) - 1 && (
+                          <span className="text-foreground-300 mx-1">•</span>
+                        )}
+                      </div>
                     ))}
-                  </motion.div>
+                    
+                    {/* Dot separator before after actions */}
+                    {macro.groupItems?.[0]?.afterActions && macro.groupItems[0].afterActions.length > 0 && (
+                      <span className="text-foreground-300 mx-1">•</span>
+                    )}
+                    
+                    {/* After Actions Icon - only once at the end */}
+                    {macro.groupItems?.[0]?.afterActions && macro.groupItems[0].afterActions.length > 0 && (
+                      <Tooltip
+                        content={
+                          <div className="p-2">
+                            <div className="font-medium mb-2">After Actions ({macro.groupItems[0].afterActions.length})</div>
+                            <div className="text-xs space-y-1">
+                              {macro.groupItems[0].afterActions.map((action, idx) => (
+                                <div key={idx}>• {getActionSummary(action)}</div>
+                              ))}
+                             
+                            </div>
+                          </div>
+                        }
+                        placement="top"
+                        color="primary"
+                        delay={500}
+                        closeDelay={100}
+                      >
+                        <Chip 
+                          size="sm" 
+                          variant="flat" 
+                          color="success"
+                          className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
+                        >
+                          <Icon icon="lucide:arrow-right" className="w-3 h-3" />
+                        </Chip>
+                      </Tooltip>
+                    )}
+                  </div>
+                  
                 </div>
                 <div className="flex items-center gap-1">
-                  <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                    <Button
-                      isIconOnly
-                      size="sm"
-                      variant="light"
-                      color="default"
-                      className="bg-transparent"
-                      onPress={() => onToggleExpanded(macro.groupId || macro.id)}
-                    >
-                      <motion.div
-                        animate={{ rotate: expandedMacros.has(macro.groupId || macro.id) ? 180 : 0 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <Icon icon="lucide:chevron-down" />
-                      </motion.div>
-                    </Button>
-                  </motion.div>
+                  {/* Removed expansion button - no more expansion needed */}
                   
                   <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                     <Switch
@@ -4588,7 +4983,25 @@ class MacroItem extends React.Component<MacroItemProps> {
                       size="sm"
                     />
                   </motion.div>
-                  
+                  <Button
+                                      isIconOnly
+                                      size="sm"
+                                      variant="light"
+                          className="opacity-80 hover:opacity-100 bg-transparent"
+                          onClick={() => onEditMacro(macro)}
+                                    >
+                          <Icon icon="lucide:edit" className="text-primary" />
+                                    </Button>
+                    <Button
+                                      isIconOnly
+                                      size="sm"
+                                      variant="light"
+                                      color="danger"
+                          className="opacity-80 hover:opacity-100 bg-transparent"
+                          onClick={() => setDeletePopoverOpen(macro.id)}
+                                    >
+                          <Icon icon="lucide:trash-2" className="text-danger-500" />
+                                    </Button>
                   <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                     <Dropdown>
                       <DropdownTrigger>
@@ -4612,14 +5025,14 @@ class MacroItem extends React.Component<MacroItemProps> {
                         </DropdownItem>
                         
                         <DropdownItem
-                          key="delete"
-                          description="Delete this macro group"
-                          color="danger"
-                          startContent={<Icon icon="lucide:trash-2" className="text-danger" />}
-                          onPress={() => setDeletePopoverOpen(macro.id)}
-                        >
-                          Delete Group
-                        </DropdownItem>
+                      key="delete"
+                      description="Delete this macro"
+                      color="danger"
+                      startContent={<Icon icon="lucide:trash-2" className="text-danger" />}
+                      onPress={() => setDeletePopoverOpen(macro.id)}
+                    >
+                      Delete Macro
+                    </DropdownItem>
                         
                         {onCreateTemplate ? (
                           <DropdownItem
@@ -4646,44 +5059,7 @@ class MacroItem extends React.Component<MacroItemProps> {
                 </div>
               </div>
               
-              {/* Expanded content */}
-              <AnimatePresence>
-                {expandedMacros.has(macro.groupId || macro.id) && (
-                  <motion.div 
-                    className="mt-3 pt-3 border-t border-default-100"
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.3, ease: "easeInOut" }}
-                  >
-                    {macro.groupItems?.map((groupMacro, index) => (
-                      <motion.div 
-                        key={groupMacro.id} 
-                        className="mb-2"
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: index * 0.05, duration: 0.2 }}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <Chip 
-                            size="sm" 
-                            variant="flat" 
-                            color={getChipColor(groupMacro.type)}
-                          >
-                            {groupMacro.type ? 
-                              groupMacro.type.replace("encoder-", "").charAt(0).toUpperCase() + 
-                              groupMacro.type.replace("encoder-", "").slice(1) 
-                              : "Standard"}
-                          </Chip>
-                          <span className="text-sm text-foreground-500">
-                            {getTriggerDescription(groupMacro.trigger)}
-                          </span>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              {/* Removed expanded content - showing MIDI info inline instead */}
             </div>
           </Card>
         </motion.div>
@@ -4704,45 +5080,152 @@ class MacroItem extends React.Component<MacroItemProps> {
           id={`macro-${macro.id}`}
           data-macro-id={macro.id}
           className="macro-card"
+          onContextMenu={(e) => handleContextMenu(e, macro)}
         >
-          <div className="p-4">
+          <div className="p-3">
             <div className="flex justify-between items-center">
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <motion.span 
                     className="drag-handle cursor-grab" 
-                    {...dragHandleProps}
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.95 }}
                   >
                     <Icon icon="lucide:grip-vertical" className="w-4 h-4" />
                   </motion.span>
-                  <h3 className="text-lg font-medium">{macro.name}</h3>
+                  <h3 className="text-base font-medium">{macro.name}</h3>
                   <motion.div
                     initial={{ opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{ delay: 0.1, duration: 0.2 }}
                   >
-                    <Chip size="sm" variant="flat" color="primary">
-                      {macro.actions.length} action{macro.actions.length !== 1 ? "s" : ""}
-                    </Chip>
+                   
                   </motion.div>
                 </div>
-                <p className="text-sm text-foreground-500 mt-1">
-                  {getTriggerDescription(macro.trigger)}
-                </p>
+                {/* Show MIDI trigger and actions inline for standard macros - compact view */}
+                <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-foreground-500">
+                  {/* Before Actions Icon - only if populated */}
+                  {macro.beforeActions && macro.beforeActions.length > 0 && (
+                    <Tooltip
+                      content={
+                        <div className="p-2">
+                          <div className="font-medium mb-2">Before Actions ({macro.beforeActions.length})</div>
+                          <div className="text-xs space-y-1">
+                            {macro.beforeActions.map((action, idx) => (
+                              <div key={idx}> {getActionSummary(action)}</div>
+                            ))}
+                           
+                          </div>
+                        </div>
+                      }
+                      placement="top"
+                      color="primary"
+                      delay={500}
+                      closeDelay={100}
+                    >
+                      <Chip 
+                        size="sm" 
+                        variant="flat" 
+                        color="success"
+                        className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
+                      >
+                        <Icon icon="lucide:arrow-left" className="w-3 h-3" />
+                      </Chip>
+                    </Tooltip>
+                  )}
+                  
+                  {/* Dot separator after before actions */}
+                  {macro.beforeActions && macro.beforeActions.length > 0 && (
+                    <span className="text-foreground-300 mx-1">•</span>
+                  )}
+                  
+                  
+                  
+                 
+                  
+                  {/* Main Actions with click action icon */}
+                  {macro.actions && macro.actions.length > 0 && (
+                    <Tooltip
+                      content={
+                        <div className="p-2">
+                          <div className="text-sm">
+                            <div className="border-b border-white-200 pb-1">
+                              <div className="font-medium text-white">Main Actions ({macro.actions.length})</div>
+                              <div className="border-b border-white-200 pb-1">
+                                <div className="text-xs opacity-80">
+                                  {getTriggerDescription(macro.trigger)}
+                                </div>
+                              </div>
+                              <div className="text-xs opacity-80">
+                                {macro.actions.map((action, idx) => (
+                                  <div key={idx}>{getActionSummary(action)}</div>
+                                ))}
+                                
+                              </div>
+                            </div>
+                            
+                            {macro.timeout && (
+                              <div className="text-xs opacity-60">
+                                <strong>Timeout:</strong> {macro.timeout}ms
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      }
+                      placement="top"
+                      color="primary"
+                      delay={500}
+                      closeDelay={100}
+                    >
+                      <Chip 
+                        size="sm" 
+                        variant="flat" 
+                        color="primary"
+                        className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
+                      >
+                        <Icon icon="lucide:mouse-pointer-click" className="w-3 h-3" />
+                      </Chip>
+                    </Tooltip>
+                  )}
+                  
+                  {/* Dot separator before after actions */}
+                  {macro.afterActions && macro.afterActions.length > 0 && (
+                    <span className="text-foreground-300 mx-1">•</span>
+                  )}
+                  
+                  {/* After Actions Icon - only if populated */}
+                  {macro.afterActions && macro.afterActions.length > 0 && (
+                    <Tooltip
+                      content={
+                        <div className="p-2">
+                          <div className="font-medium mb-2">After Actions ({macro.afterActions.length})</div>
+                          <div className="text-xs space-y-1">
+                            {macro.afterActions.map((action, idx) => (
+                              <div key={idx}> {getActionSummary(action)}</div>
+                            ))}
+                            
+                          </div>
+                        </div>
+                      }
+                      placement="top"
+                      color="primary"
+                      delay={500}
+                      closeDelay={100}
+                    >
+                      <Chip 
+                        size="sm" 
+                        variant="flat" 
+                        color="success"
+                        className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
+                      >
+                        <Icon icon="lucide:arrow-right" className="w-3 h-3" />
+                      </Chip>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-1">
-                <Button
-                  isIconOnly
-                  size="sm"
-                  variant="light"
-                  color="default"
-                  className="bg-transparent"
-                  onPress={() => onToggleExpanded(macro.id)}
-                >
-                  <Icon icon={expandedMacros.has(macro.id) ? "lucide:chevron-up" : "lucide:chevron-down"} />
-                </Button>
+                {/* Removed expansion button - no more expansion needed */}
                 
                 <Switch
                   isSelected={activeMacros.has(macro.id)}
@@ -4750,8 +5233,25 @@ class MacroItem extends React.Component<MacroItemProps> {
                     onToggleMacro(macro.id, isSelected);
                   }}
                   size="sm"
-                />
-                
+                /> <Button
+                isIconOnly
+                size="sm"
+                variant="light"
+    className="opacity-80 hover:opacity-100 bg-transparent"
+    onClick={() => onEditMacro(macro)}
+              >
+    <Icon icon="lucide:edit" className="text-primary" />
+              </Button>
+<Button
+                isIconOnly
+                size="sm"
+                variant="light"
+                color="danger"
+    className="opacity-80 hover:opacity-100 bg-transparent"
+    onClick={() => setDeletePopoverOpen(macro.id)}
+              >
+    <Icon icon="lucide:trash-2" className="text-danger-500" />
+              </Button>
                 <Dropdown>
                   <DropdownTrigger>
                     <Button
@@ -4807,26 +5307,52 @@ class MacroItem extends React.Component<MacroItemProps> {
               </div>
             </div>
             
-            {/* Expanded content */}
-            {expandedMacros.has(macro.id) && (
-              <div className="mt-3 pt-3 border-t border-default-100">
-                {macro.actions.length > 0 && (
-                  <div className="space-y-1">
-                    {macro.actions.map((action, index) => (
-                      <div key={`${macro.id}-action-${index}`} className="text-xs p-2 bg-default-50 rounded-md flex items-center">
-                        <span className="text-foreground-500 mr-2">{index + 1}.</span>
-                        <span className="capitalize font-medium">{action.type}</span>
-                        <span className="mx-1">-</span>
-                        <span>{commonProps.getActionSummary(action)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            {/* Removed expanded content - showing action summary inline instead */}
           </div>
         </Card>
       </motion.div>
     );
   }
 }
+
+export function getActionTypeDisplayName(actionType: string): string {
+    switch (actionType) {
+      case "keyboard-macro": return "Keyboard Macro";
+      case "text-macro": return "Text Macro";
+      case "open-app": return "Open App";
+      case "open-website": return "Open Website";
+      case "media-key": return "Media Key";
+      case "run-command": return "Run Command";
+      case "mouse-click": return "Mouse Click";
+      case "mouse-move": return "Mouse Move";
+      case "scroll": return "Scroll";
+      case "system-command": return "System Command";
+      default: return actionType;
+    }
+  }
+
+  export function getDetailedActionInfo(action: Action): string {
+    switch (action.type) {
+      case "keyboard-macro":
+        return `Keys: ${action.params.keys?.join(" + ") || "N/A"}`;
+      case "text-macro":
+        return `Text: ${action.params.text || "N/A"}`;
+      case "open-app":
+        return `App: ${action.params.appName || "N/A"}`;
+      case "open-website":
+        return `Website: ${action.params.websiteUrl || "N/A"}`;
+      case "media-key":
+        return `Key: ${action.params.mediaKey || "N/A"}`;
+      case "run-command":
+        return `Command: ${action.params.command || "N/A"}`;
+      case "mouse-click":
+        return `Button: ${action.params.button || "N/A"}, Position: (${action.params.x || "N/A"}, ${action.params.y || "N/A"}), Hold: ${action.params.hold ? "Yes" : "No"}`;
+      case "mouse-move":
+        return `Direction: ${action.params.direction || "N/A"}, Distance: ${action.params.distance || "N/A"}px, Duration: ${action.params.duration || "N/A"}ms`;
+      case "scroll":
+        return `Direction: ${action.params.direction || "N/A"}, Amount: ${action.params.amount || "N/A"}`;
+      case "system-command":
+        return `Command: ${action.params.command || "N/A"}`;
+      default: return "Unknown action type";
+    }
+  }

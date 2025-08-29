@@ -82,6 +82,15 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+/* Fix toast container blocking clicks */
+[data-slot="toast-container"] {
+  pointer-events: none !important;
+}
+
+[data-slot="toast-container"] > * {
+  pointer-events: auto !important;
+}
+
 /* Rainbow color definitions for categories (ordered by hue) */
 .category-color-red { background-color: #dc2626; }
 .category-color-rose { background-color: #e11d48; }

@@ -13,6 +13,8 @@ interface MidiTriggerSelectorProps {
   forceDirection?: "increment" | "decrement";
   matchChannel?: number;
   matchController?: number;
+  externalListening?: boolean; // Add external listening state
+  onStopExternalListening?: () => void; // Add callback to stop external listening
 }
 
 export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({ 
@@ -20,15 +22,20 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
   onChange, 
   forceDirection,
   matchChannel,
-  matchController
+  matchController,
+  externalListening = false, // Add external listening prop with default
+  onStopExternalListening // Add new prop
 }) => {
   const [isListening, setIsListening] = useState(false);
   const { lastReceivedMessage, isEnabled } = useMidi();
   const [listeningStartTime, setListeningStartTime] = useState<number | null>(null);
+  
+  // Determine if we should show listening state (either internal or external)
+  const showListening = isListening || externalListening;
     
   // When in listening mode, watch for MIDI input
   useEffect(() => {
-    if (!isListening || !lastReceivedMessage || !listeningStartTime) return;
+    if (!showListening || !lastReceivedMessage || !listeningStartTime) return;
     
     // Only process messages that arrived AFTER listening started
     if (lastReceivedMessage.timestamp > listeningStartTime) {
@@ -60,7 +67,7 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
         setListeningStartTime(null); // Reset start time
       }
     }
-  }, [lastReceivedMessage, isListening, onChange, forceDirection, listeningStartTime]);
+  }, [lastReceivedMessage, showListening, onChange, forceDirection, listeningStartTime]);
             
   // Removed auto-filling effect to prevent unwanted cross-detection between increment and decrement
   // useEffect(() => {
@@ -153,41 +160,50 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
   const isPreFilledEncoder = false;
 
   return (
-    <Card className="p-4">
-      {!value || isListening ? ( // Show listening UI if no value OR explicitly listening
+    <Card className="">
+      {!value || showListening ? ( // Show listening UI if no value OR explicitly listening
         <>
-          {isListening ? (
+          {showListening ? (
             <div className="flex flex-col items-center justify-center p-6 space-y-4">
-              <div className="animate-pulse flex items-center justify-center w-16 h-16 rounded-full bg-primary-100">
-                <Icon icon="lucide:activity" className="text-primary text-2xl" />
-          </div>
+             
               <p className="text-center">
                 Listening for MIDI message...
               </p>
-              <p className="text-xs text-foreground-500 text-center">
-                Play a note or move a control on your MIDI device
-          </p>
+            
               <Button
                 color="danger"
                 variant="flat"
-                onPress={handleStopListening}
-                size="sm"
+                fullWidth
+                startContent={<Icon icon="lucide:square" />}
+                onPress={() => {
+                  if (externalListening && onStopExternalListening) {
+                    // Stop external listening (from bulk initializer)
+                    onStopExternalListening();
+                  } else {
+                    // Stop internal listening
+                    handleStopListening();
+                  }
+                }}
+                className="animate-pulse"
               >
-            Cancel
-          </Button>
+                {externalListening ? "Stop Auto-Detection" : "Stop Listening"}
+              </Button>
         </div>
           ) : (
-            <Button
-              color="primary"
-              fullWidth
-              startContent={<Icon icon="lucide:radio" />}
-              onPress={handleStartListening}
-              isDisabled={!isEnabled || isPreFilledEncoder}
-            >
-              Detect MIDI Input
-            </Button>
+            // Only show the detect button if not externally listening
+            !externalListening && (
+              <Button
+                color="primary"
+                fullWidth
+                startContent={<Icon icon="lucide:radio" />}
+                onPress={handleStartListening}
+                isDisabled={!isEnabled || isPreFilledEncoder}
+              >
+                Detect MIDI Input
+              </Button>
+            )
           )}
-           {value && !isListening && !isPreFilledEncoder && ( // Show current value if set and not listening, and not a pre-filled encoder
+           {value && !showListening && !isPreFilledEncoder && ( // Show current value if set and not listening, and not a pre-filled encoder
             <div className="mt-3">
                 {renderTriggerDetails()}
           </div>

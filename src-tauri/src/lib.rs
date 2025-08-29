@@ -1009,8 +1009,13 @@ async fn start_midi_listening_rust<R: Runtime>(
             None => return,
         };
         
-        // Early exit if no macros registered
-        if APP_STATE.registered_macros.lock().unwrap().is_empty() {
+        // Always emit the raw MIDI event for detection purposes
+        // This ensures the frontend can detect MIDI messages even when no macros are active
+        emit_midi_event(&midi_data, timestamp, &app_handle_clone);
+        
+        // Only process macro triggers if there are registered macros
+        let registered_macros = APP_STATE.registered_macros.lock().unwrap();
+        if registered_macros.is_empty() {
             return;
         }
         
@@ -1018,7 +1023,6 @@ async fn start_midi_listening_rust<R: Runtime>(
         
         // Get macros and settings in a single lock acquisition
         let (macros_to_check, _settings) = {
-            let registered_macros = APP_STATE.registered_macros.lock().unwrap();
             let settings = APP_STATE.global_settings.lock().unwrap();
             (registered_macros.clone(), settings.clone())
         };
@@ -1037,9 +1041,6 @@ async fn start_midi_listening_rust<R: Runtime>(
                 });
             }
         }
-        
-        // Always emit the raw MIDI event
-        emit_midi_event(&midi_data, timestamp, &app_handle_for_macros);
         
     }, ())
     .map_err(|e| create_midi_error("Failed to connect to MIDI device", e))?;

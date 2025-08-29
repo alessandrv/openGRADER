@@ -10,16 +10,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 	<React.StrictMode>
 		<HeroUIProvider>
 		<ToastProvider 
-  toastProps={{
-    variant: "flat",
-    timeout: 2000,
-    hideIcon: true,
-    classNames: {
-		
-      closeButton: "opacity-100 absolute right-4 top-1/2 -translate-y-1/2",
-    },
-  }} 
-/>
+			toastProps={{
+				variant: "flat",
+				timeout: 2000,
+				
+			}}
+		/>
 				<MidiProvider>
 			<main className="text-foreground bg-background">
 				<App />

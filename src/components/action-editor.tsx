@@ -3,6 +3,7 @@ import { Card, Input, Button, Select, SelectItem, Checkbox, addToast, Modal, Mod
 import { Icon } from "@iconify/react";
 import { Action } from "../types/macro";
 import { getCursorPosition } from "../lib/tauri";
+import { KeySelectorModal } from "./key-selector-modal";
 
 interface ActionEditorProps {
   action: Action;
@@ -17,10 +18,24 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
   const [coordCaptureActive, setCoordCaptureActive] = React.useState(false);
   const [mousePosition, setMousePosition] = React.useState({ x: 0, y: 0 });
   
+  // Key selector modal state
+  const [isKeySelectorOpen, setIsKeySelectorOpen] = React.useState(false);
+  const [activeKeyField, setActiveKeyField] = React.useState<string | null>(null);
+  
   // Debug log whenever the edited action changes
   React.useEffect(() => {
     console.log("Edited action updated:", editedAction);
   }, [editedAction]);
+
+  // Handle key selection from the key selector modal
+  const handleKeySelect = (key: string | string[]) => {
+    if (activeKeyField) {
+      const selectedKey = Array.isArray(key) ? key[0] : key;
+      handleParamChange(activeKeyField, selectedKey);
+      setActiveKeyField(null);
+      setIsKeySelectorOpen(false);
+    }
+  };
 
   // Effect to handle coordinate detection mode
   React.useEffect(() => {
@@ -199,10 +214,21 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
                 }
               />
               <Button 
-                size="sm" 
+                variant="flat" 
+                onPress={() => {
+                  setActiveKeyField("key");
+                  setIsKeySelectorOpen(true);
+                }}
+                startContent={<Icon icon="lucide:keyboard" />}
+                className="h-[56px]"
+              >
+                Select Key
+              </Button>
+              <Button 
                 variant="flat" 
                 onPress={handleKeyDetection}
                 isDisabled={isDetectingKey}
+                className="h-[56px]"
               >
                 {isDetectingKey ? "Detecting..." : "Detect Key"}
               </Button>
@@ -252,10 +278,21 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
                 }
               />
               <Button 
-                size="sm" 
+                variant="flat" 
+                onPress={() => {
+                  setActiveKeyField("key");
+                  setIsKeySelectorOpen(true);
+                }}
+                startContent={<Icon icon="lucide:keyboard" />}
+                className="h-[56px]"
+              >
+                Select Key
+              </Button>
+              <Button 
                 variant="flat" 
                 onPress={handleKeyDetection}
                 isDisabled={isDetectingKey}
+                className="h-[56px]"
               >
                 {isDetectingKey ? "Detecting..." : "Detect Key"}
               </Button>
@@ -552,6 +589,14 @@ export const ActionEditor: React.FC<ActionEditorProps> = ({ action, onSave, onCa
           Save
         </Button>
       </div>
+      
+      {/* Key Selector Modal */}
+      <KeySelectorModal
+        isOpen={isKeySelectorOpen}
+        onOpenChange={setIsKeySelectorOpen}
+        onKeySelect={handleKeySelect}
+        currentKey={activeKeyField ? (editedAction.params[activeKeyField] || "") : ""}
+      />
     </Card>
   );
 };

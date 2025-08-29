@@ -56,6 +56,7 @@ export const MidiLog = () => {
           </span>
         </div>
         <Select
+          aria-label="Select MIDI input device"
           placeholder="Select MIDI Input"
           selectedKeys={selectedInput ? [selectedInput.id] : []}
           onChange={(e) => {

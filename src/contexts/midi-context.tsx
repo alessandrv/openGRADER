@@ -296,38 +296,6 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsEnabled(true);
         // addToast({ title: "MIDI Enabled", description: `${inputPorts.length} inputs detected`, color: "success" });
         console.log("[MidiProvider] MIDI inputs listed:", inputPorts.length);
-
-        // Ensure we start listening early so users can create macros even with zero active macros
-        try {
-          if (!selectedInputRef.current && inputPorts.length > 0) {
-            // Try restore saved device first
-            const saved = localStorage.getItem("selectedMidiDevice");
-            if (saved) {
-              try {
-                const parsed = JSON.parse(saved) as { id?: string; name: string };
-                const match = inputPorts.find(p => p.name === parsed.name) || inputPorts.find(p => p.id === parsed.id);
-                if (match) {
-                  console.log("[MidiProvider] Auto-restoring saved MIDI device:", match.name);
-                  await invoke('start_midi_listening_rust', { portIndex: parseInt(match.id) });
-                  setSelectedInputInternal(match);
-                }
-              } catch (e) {
-                console.warn("[MidiProvider] Failed to parse saved device for auto-restore:", e);
-              }
-            }
-            // If still none selected, auto-select the first available port to enable detection immediately
-            if (!selectedInputRef.current && inputPorts.length >= 1) {
-              const first = inputPorts[0];
-              console.log("[MidiProvider] Auto-selecting first available MIDI input:", first.name);
-              await invoke('start_midi_listening_rust', { portIndex: parseInt(first.id) });
-              setSelectedInputInternal(first);
-              localStorage.setItem("selectedMidiDevice", JSON.stringify(first));
-              addToast({ title: "MIDI Input Selected", description: first.name, color: 'secondary' });
-            }
-          }
-        } catch (autoErr) {
-          console.error("[MidiProvider] Auto-start listening failed:", autoErr);
-        }
       } catch (err) {
         console.error("[MidiProvider] Could not initialize MIDI or list ports:", err);
         if (!isMounted) return;
@@ -348,7 +316,7 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
             value: payload.value || payload.velocity, // Use velocity if value is not present (e.g. for noteon)
             timestamp: Date.now()
           };
-      // Try to associate this event with a macro, but only if an ACTIVE match exists
+          // Try to associate this event with a macro, preferring active ones
           const attachMacroAssociation = () => {
             try {
               const macros = JSON.parse(localStorage.getItem('midiMacros') || '[]') as Array<any>;
@@ -371,14 +339,13 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
                 return false;
               });
-        if (candidates.length === 0) return base;
-        // Only associate if there is an ACTIVE matching macro (or any active member of the same group)
-        const activeCandidate = candidates.find(c => activeIds.has(c.id));
-        if (!activeCandidate) return base; // no active match -> no association shown in monitor
-        const isGroup = !!activeCandidate.groupId;
+              if (candidates.length === 0) return base;
+              // Prefer active macros
+              const preferred = candidates.find(c => activeIds.has(c.id)) || candidates[0];
+              const isGroup = !!preferred.groupId;
               const stripSuffix = (name: string) => name.replace(/ \((Increment|Decrement|Click)\)$/i, "");
-        const macroId = isGroup ? (activeCandidate.groupId as string) : (activeCandidate.id as string);
-        const macroName = isGroup ? stripSuffix(activeCandidate.name as string) : (activeCandidate.name as string);
+              const macroId = isGroup ? (preferred.groupId as string) : (preferred.id as string);
+              const macroName = isGroup ? stripSuffix(preferred.name as string) : (preferred.name as string);
               return { ...base, macroId, macroName };
             } catch {
               return base;
@@ -602,50 +569,38 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (newInputsString !== lastInputsString) {
           console.log("[MidiProvider] MIDI input list changed, updating.");
           
-          // Check if currently selected device is still available (match by name; index may change)
+          // Check if currently selected device is still available
           const currentSelected = selectedInputRef.current;
           if (currentSelected) {
-            const matchedByName = newInputs.find(input => input.name === currentSelected.name);
-            if (!matchedByName) {
-              console.log("[MidiProvider] Currently selected MIDI device disconnected:", currentSelected.name);
-              // Stop listening and clear selection
-              try {
-                await invoke('stop_midi_listening_rust');
-              } catch (stopErr) {
-                console.error("[MidiProvider] Error stopping MIDI listening after disconnection:", stopErr);
-              }
-              setSelectedInputInternal(null);
-              localStorage.removeItem("selectedMidiDevice");
-              addToast({
-                title: "MIDI Device Disconnected",
-                description: `"${currentSelected.name}" was disconnected`,
-                color: "warning"
-              });
-              console.log("[MidiProvider] Device disconnected, showing selection modal");
-              setTimeout(() => {
-                setShowDeviceModal(true);
-              }, 1000);
-            } else if (matchedByName.id !== currentSelected.id) {
-              // Device still present but index changed; reconnect to new index transparently
-              console.log(
-                "[MidiProvider] MIDI device index changed, reconnecting:",
-                currentSelected.name,
-                "old=", currentSelected.id,
-                "new=", matchedByName.id
-              );
-              try {
-                await invoke('stop_midi_listening_rust');
-              } catch (stopErr) {
-                console.warn("[MidiProvider] Error stopping before re-selecting device:", stopErr);
-              }
-              try {
-                await invoke('start_midi_listening_rust', { portIndex: parseInt(matchedByName.id) });
-                setSelectedInputInternal(matchedByName);
-                localStorage.setItem("selectedMidiDevice", JSON.stringify(matchedByName));
-              } catch (startErr) {
-                console.error("[MidiProvider] Error re-selecting MIDI device after index change:", startErr);
-              }
-            }
+            const isStillAvailable = newInputs.some(input => 
+              input.name === currentSelected.name && input.id === currentSelected.id
+            );
+            
+                         if (!isStillAvailable) {
+               console.log("[MidiProvider] Currently selected MIDI device disconnected:", currentSelected.name);
+               
+               // Clear the selection and stop listening
+               try {
+                 await invoke('stop_midi_listening_rust');
+               } catch (stopErr) {
+                 console.error("[MidiProvider] Error stopping MIDI listening after disconnection:", stopErr);
+               }
+               
+               setSelectedInputInternal(null);
+               localStorage.removeItem("selectedMidiDevice");
+               
+               addToast({
+                 title: "MIDI Device Disconnected",
+                 description: `"${currentSelected.name}" was disconnected`,
+                 color: "warning"
+               });
+               
+               // Always show device selection modal after disconnection (like first boot)
+               console.log("[MidiProvider] Device disconnected, showing selection modal");
+               setTimeout(() => {
+                 setShowDeviceModal(true);
+               }, 1000); // Small delay to let the user see the disconnection toast first
+             }
           }
           
           setInputs(newInputs);
@@ -664,38 +619,10 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
               
               // If no device is currently selected and we now have devices, show selection modal
               if (!currentSelected && newLength > 0) {
-                // Try to auto-restore saved device by name
-                const saved = localStorage.getItem("selectedMidiDevice");
-                let restored = false;
-                if (saved) {
-                  try {
-                    const parsed = JSON.parse(saved) as { id?: string; name: string };
-                    const match = newInputs.find(p => p.name === parsed.name) || newInputs.find(p => p.id === parsed.id);
-                    if (match) {
-                      console.log("[MidiProvider] Auto-restoring saved MIDI device after refresh:", match.name);
-                      await invoke('start_midi_listening_rust', { portIndex: parseInt(match.id) });
-                      setSelectedInputInternal(match);
-                      restored = true;
-                    }
-                  } catch (e) {
-                    console.warn("[MidiProvider] Failed to parse saved device during refresh:", e);
-                  }
-                }
-                if (!restored) {
-                  // Auto-select the first available device to enable monitoring immediately
-                  const first = newInputs[0];
-                  console.log("[MidiProvider] Auto-selecting first available device after refresh:", first.name);
-                  try {
-                    await invoke('start_midi_listening_rust', { portIndex: parseInt(first.id) });
-                    setSelectedInputInternal(first);
-                    localStorage.setItem("selectedMidiDevice", JSON.stringify(first));
-                    addToast({ title: "MIDI Input Selected", description: first.name, color: 'secondary' });
-                  } catch (startErr) {
-                    console.error("[MidiProvider] Error auto-selecting device after refresh:", startErr);
-                    console.log("[MidiProvider] Showing selection modal due to auto-select failure");
-                    setTimeout(() => setShowDeviceModal(true), 1000);
-                  }
-                }
+                console.log("[MidiProvider] New MIDI devices detected and no device selected, showing selection modal");
+                setTimeout(() => {
+                  setShowDeviceModal(true);
+                }, 1000); // Small delay to let the user see the detection toast first
               }
             } else if (newLength < currentLength && !currentSelected) {
               // Only show general removal message if no specific device was disconnected

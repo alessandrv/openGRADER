@@ -50,7 +50,7 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
   onBulkCreate,
   onCreateReady
 }) => {
-  const { lastReceivedMessage } = useMidi(); // Add MIDI context
+  const { lastReceivedMessage, isEnabled, selectedInput } = useMidi(); // Add MIDI context
   const [config, setConfig] = useState<BulkConfig>({
     categoryId: template.categoryId || null,
     midiTriggerGroups: [],
@@ -76,6 +76,7 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
   const [listeningStartTime, setListeningStartTime] = useState<number | null>(null);
   const [currentDetectionTarget, setCurrentDetectionTarget] = useState<{groupId: string, triggerId: string} | null>(null);
   const [editingGroupName, setEditingGroupName] = useState<string | null>(null);
+  const lastProcessedTimestampRef = useRef<number>(0); // Track last processed MIDI timestamp
   
   // Use refs to store the latest state values to avoid stale closures
   const configRef = useRef(config);
@@ -90,6 +91,22 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
   useEffect(() => {
     configRef.current = config;
   }, [config]);
+  
+  // Debug effect to track all MIDI messages
+  useEffect(() => {
+    if (lastReceivedMessage) {
+      console.log("🎹 New MIDI message received:", lastReceivedMessage);
+    }
+  }, [lastReceivedMessage]);
+  
+  // Debug effect to track MIDI setup
+  useEffect(() => {
+    console.log("🎹 MIDI Status:", {
+      isEnabled,
+      selectedInput: selectedInput?.name || 'None',
+      isListeningForMidi
+    });
+  }, [isEnabled, selectedInput, isListeningForMidi]);
   
   useEffect(() => {
     currentDetectionTargetRef.current = currentDetectionTarget;
@@ -187,25 +204,96 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
       console.log("New config:", newConfig);
       return newConfig;
     });
+    
+    // If a trigger was set (not cleared) and we're in auto-detection mode, move to next target
+    if (trigger && isListeningForMidi) {
+      handleAutoDetectTriggerSet(groupId, triggerId);
+    }
   };
 
   // Start iterative MIDI detection
   const startIterativeMidiDetection = () => {
+    // Check if MIDI is properly set up
+    if (!isEnabled) {
+      addToast({
+        title: "MIDI Not Available",
+        description: "MIDI is not enabled. Please check your MIDI setup.",
+        color: "danger"
+      });
+      return;
+    }
+    
+    if (!selectedInput) {
+      addToast({
+        title: "No MIDI Device Selected",
+        description: "Please select a MIDI input device before using auto-detect.",
+        color: "danger"
+      });
+      return;
+    }
+    
+    console.log("🎹 Starting auto-detect with MIDI setup:", { isEnabled, selectedInput: selectedInput.name });
+    
     setIsListeningForMidi(true);
     setMidiDetectionCount(0);
     setListeningStartTime(Date.now());
     
     // Clear message tracking completely to ensure first MIDI input isn't ignored
     lastProcessedMidiRef.current = null;
+    // Reset timestamp to current time to ignore any stale MIDI messages
+    lastProcessedTimestampRef.current = Date.now();
+    console.log("🔄 Reset MIDI tracking, timestamp:", lastProcessedTimestampRef.current);
     
-    // Force a fresh detection target
-    const nextTarget = findNextDetectionTarget();
-    setCurrentDetectionTarget(nextTarget);
+    // Reset the debouncing timer to allow immediate processing of the first MIDI message
+    lastMidiDetectionTimeRef.current = 0;
     
-    // Update the ref immediately as well
-    currentDetectionTargetRef.current = nextTarget;
-    
-    console.log("Starting MIDI detection mode with target:", nextTarget);
+    // Set the initial detection target
+    setTimeout(() => {
+      const currentConfig = configRef.current;
+      let initialTarget: {groupId: string, triggerId: string} | null = null;
+      
+      if (currentConfig.midiTriggerGroups.length === 0) {
+        // No groups exist, create the first one
+        const requiredTriggers = getRequiredMidiTriggers();
+        const newGroupId = crypto.randomUUID();
+        const newGroupName = "Group 1";
+        
+        const newGroup: MidiTriggerGroup = {
+          id: newGroupId,
+          name: newGroupName,
+          triggers: requiredTriggers.map(triggerId => ({
+            triggerId,
+            trigger: null
+          }))
+        };
+        
+        setConfig(prev => {
+          const newConfig = {
+            ...prev,
+            midiTriggerGroups: [newGroup]
+          };
+          configRef.current = newConfig;
+          return newConfig;
+        });
+        
+        initialTarget = {
+          groupId: newGroupId,
+          triggerId: requiredTriggers[0]
+        };
+      } else {
+        // Find the first empty trigger in existing groups
+        initialTarget = findNextDetectionTarget(currentConfig);
+      }
+      
+      if (initialTarget) {
+        setCurrentDetectionTarget(initialTarget);
+        currentDetectionTargetRef.current = initialTarget;
+        // Reset MIDI tracking to ensure we wait for fresh input
+        lastProcessedMidiRef.current = null;
+        lastProcessedTimestampRef.current = Date.now();
+        console.log("🎯 Initial detection target set:", initialTarget, "timestamp:", lastProcessedTimestampRef.current);
+      }
+    }, 0);
     
     // Show instructions
     addToast({
@@ -255,11 +343,12 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
   };
 
   // Find the next available detection target
-  const findNextDetectionTarget = (): {groupId: string, triggerId: string} | null => {
+  const findNextDetectionTarget = (currentConfig?: BulkConfig): {groupId: string, triggerId: string} | null => {
     const requiredTriggers = getRequiredMidiTriggers();
+    const configToUse = currentConfig || configRef.current;
     
     // First, check if there's an incomplete group that needs more triggers
-    for (const group of config.midiTriggerGroups) {
+    for (const group of configToUse.midiTriggerGroups) {
       const nextEmptyIndex = group.triggers.findIndex(t => t.trigger === null);
       if (nextEmptyIndex !== -1) {
         return {
@@ -271,7 +360,7 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
     
     // If no incomplete groups, we need to create a new group
     const newGroupId = crypto.randomUUID();
-    const newGroupName = `Group ${config.midiTriggerGroups.length + 1}`;
+    const newGroupName = `Group ${configToUse.midiTriggerGroups.length + 1}`;
     
     const newGroup: MidiTriggerGroup = {
       id: newGroupId,
@@ -283,10 +372,14 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
     };
     
     // Add the new group
-    setConfig(prev => ({
-      ...prev,
-      midiTriggerGroups: [...prev.midiTriggerGroups, newGroup]
-    }));
+    setConfig(prev => {
+      const newConfig = {
+        ...prev,
+        midiTriggerGroups: [...prev.midiTriggerGroups, newGroup]
+      };
+      configRef.current = newConfig; // Update ref immediately
+      return newConfig;
+    });
     
     // Return the first trigger of the new group
     return {
@@ -314,212 +407,103 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
     };
   }, [isListeningForMidi, midiDetectionCount]);
 
-  // Effect to handle MIDI detection when listening
+  // Effect to handle MIDI detection when listening - SIMPLIFIED VERSION
   useEffect(() => {
-    if (!isListeningForMidi || !lastReceivedMessage) return;
+    // Auto-detect simply sets the current detection target
+    // The actual MIDI processing is handled by the MidiTriggerSelector components
+    // This effect just manages moving to the next target when a trigger is set
+  }, [isListeningForMidi]);
+
+  // Function to move to the next detection target
+  const moveToNextDetectionTarget = useCallback(() => {
+    if (!isListeningForMidi) return;
     
-    // Get the current detection target fresh from ref (not stale closure)
-    const currentTarget = currentDetectionTargetRef.current;
-    if (!currentTarget) {
-      console.log("No current detection target available");
-      return;
+    console.log("🎯 Moving to next detection target...");
+    
+    // Reset MIDI tracking to ensure we wait for new MIDI input
+    lastProcessedMidiRef.current = null;
+    // Update timestamp to current time so next selector waits for fresh MIDI
+    lastProcessedTimestampRef.current = Date.now();
+    console.log("🔄 Reset MIDI tracking and updated timestamp to:", lastProcessedTimestampRef.current);
+    
+    const currentConfig = configRef.current;
+    const requiredTriggers = getRequiredMidiTriggers();
+    
+    // Find the next empty trigger in existing groups
+    for (const group of currentConfig.midiTriggerGroups) {
+      const nextEmptyTrigger = group.triggers.find(t => t.trigger === null);
+      if (nextEmptyTrigger) {
+        const nextTarget = {
+          groupId: group.id,
+          triggerId: nextEmptyTrigger.triggerId
+        };
+        setCurrentDetectionTarget(nextTarget);
+        currentDetectionTargetRef.current = nextTarget;
+        console.log("✅ Set next target in existing group:", nextTarget);
+        return;
+      }
     }
     
-    // Only process MIDI messages that were received AFTER detection started
-    if (listeningStartTime && lastReceivedMessage.timestamp < listeningStartTime) {
-      console.log("Ignoring old MIDI message from before detection started:", {
-        messageTime: lastReceivedMessage.timestamp,
-        detectionStartTime: listeningStartTime,
-        difference: listeningStartTime - lastReceivedMessage.timestamp
-      });
-      return;
-    }
+    // If no empty triggers found, create a new group
+    console.log("� Creating new group for detection...");
+    const newGroupId = crypto.randomUUID();
+    const newGroupName = `Group ${currentConfig.midiTriggerGroups.length + 1}`;
     
-    // Simpler message ID that only includes the essential MIDI data
-    const messageId = `${lastReceivedMessage.type}_${lastReceivedMessage.channel}_${lastReceivedMessage.note ?? 'null'}_${lastReceivedMessage.controller ?? 'null'}_${lastReceivedMessage.value}_${lastReceivedMessage.timestamp}`;
+    const newGroup: MidiTriggerGroup = {
+      id: newGroupId,
+      name: newGroupName,
+      triggers: requiredTriggers.map(triggerId => ({
+        triggerId,
+        trigger: null
+      }))
+    };
     
-    console.log("MIDI detection check:", {
-      messageId,
-      lastProcessed: lastProcessedMidiRef.current,
-      isNew: lastProcessedMidiRef.current !== messageId,
-      messageTime: lastReceivedMessage.timestamp,
-      detectionStartTime: listeningStartTime
+    // Add the new group
+    setConfig(prev => {
+      const newConfig = {
+        ...prev,
+        midiTriggerGroups: [...prev.midiTriggerGroups, newGroup]
+      };
+      configRef.current = newConfig;
+      return newConfig;
     });
     
-    // Skip if we already processed this exact message
-    if (lastProcessedMidiRef.current === messageId) {
-      console.log("Skipping already processed message:", messageId);
-      return;
-    }
+    // Set target to the first trigger of the new group
+    const newTarget = {
+      groupId: newGroupId,
+      triggerId: requiredTriggers[0]
+    };
+    setCurrentDetectionTarget(newTarget);
+    currentDetectionTargetRef.current = newTarget;
     
-    // Mark this message as processed
-    lastProcessedMidiRef.current = messageId;
+    // Reset MIDI tracking for the new detection target
+    lastProcessedMidiRef.current = null;
+    lastProcessedTimestampRef.current = Date.now();
+    console.log("🔄 Reset MIDI tracking for new group, timestamp:", lastProcessedTimestampRef.current);
     
-    // Add debouncing to prevent rapid group creation
-    const now = Date.now();
-    const timeSinceLastDetection = now - lastMidiDetectionTimeRef.current;
-    const minDetectionInterval = 500; // Minimum 500ms between detections
+    setMidiDetectionCount(prev => prev + 1);
     
-    // If we're at the last detection of a group, be more lenient with debouncing
-    // to prevent creating empty groups
-    const currentConfig = configRef.current;
-    const currentGroup = currentConfig.midiTriggerGroups.find(g => g.id === currentTarget.groupId);
-    const isLastDetection = currentGroup && currentGroup.triggers.filter(t => t.trigger === null).length === 1;
+    console.log("✅ Created new group and set target:", newTarget);
     
-    // Use shorter debounce for last detection to prevent empty groups
-    const effectiveMinInterval = isLastDetection ? 200 : minDetectionInterval;
-    
-    if (timeSinceLastDetection < effectiveMinInterval) {
-      console.log(`Debouncing MIDI detection. Time since last: ${timeSinceLastDetection}ms, minimum: ${effectiveMinInterval}ms, isLastDetection: ${isLastDetection}`);
-      
-      // Clear any existing timeout
-      if (midiDetectionTimeoutRef.current) {
-        clearTimeout(midiDetectionTimeoutRef.current);
-      }
-      
-      // Set a new timeout to process this MIDI message after the debounce period
-      midiDetectionTimeoutRef.current = setTimeout(() => {
-        console.log("Processing debounced MIDI detection:", lastReceivedMessage);
-        processMidiDetection(lastReceivedMessage, currentTarget);
-      }, effectiveMinInterval - timeSinceLastDetection);
-      
-      return;
-    }
-    
-    // Update the last detection time
-    lastMidiDetectionTimeRef.current = now;
-    
-    console.log("Processing MIDI auto-detection immediately:", lastReceivedMessage);
-    
-    // Process the MIDI detection
-    processMidiDetection(lastReceivedMessage, currentTarget);
-    
-  }, [lastReceivedMessage, isListeningForMidi, listeningStartTime]);
+    addToast({
+      title: "New Group Created",
+      description: `Group "${newGroupName}" created automatically`,
+      color: "success"
+    });
+  }, [isListeningForMidi, getRequiredMidiTriggers]);
 
-  // Helper function to process MIDI detection
-  const processMidiDetection = useCallback((midiMessage: any, currentTarget: {groupId: string, triggerId: string}) => {
-    const { groupId, triggerId } = currentTarget;
-    console.log("Detection target:", { groupId, triggerId });
+  // Handle when a MIDI trigger is set during auto-detection
+  const handleAutoDetectTriggerSet = useCallback((groupId: string, triggerId: string) => {
+    if (!isListeningForMidi) return;
+    if (currentDetectionTarget?.groupId !== groupId || currentDetectionTarget?.triggerId !== triggerId) return;
     
-    // Use config from ref to get latest state
-    const currentConfig = configRef.current;
-    const targetGroup = currentConfig.midiTriggerGroups.find(g => g.id === groupId);
-    console.log("Found target group:", targetGroup);
+    console.log("🎯 Trigger set during auto-detection:", { groupId, triggerId });
     
-    // Verify that this target is still valid (group still exists and trigger is still empty)
-    if (!targetGroup) {
-      console.log("Target group no longer exists, skipping MIDI detection");
-      return;
-    }
-    
-    const targetTrigger = targetGroup.triggers.find(t => t.triggerId === triggerId);
-    if (!targetTrigger || targetTrigger.trigger !== null) {
-      console.log("Target trigger no longer exists or is already filled, skipping MIDI detection");
-      return;
-    }
-    
-    if (targetGroup) {
-      const triggerIndex = targetGroup.triggers.findIndex(t => t.triggerId === triggerId);
-      console.log("Trigger index:", triggerIndex, "for triggerId:", triggerId);
-      console.log("All triggers in group:", targetGroup.triggers);
-      
-      if (triggerIndex !== -1) {
-        const requiredTriggers = getRequiredMidiTriggers();
-        const triggerDirection = isEncoderTemplate ? 
-          (triggerIndex === 0 ? "increment" : triggerIndex === 1 ? "decrement" : undefined) : 
-          undefined;
-        
-        const newTrigger = {
-          type: midiMessage.type as any,
-          channel: midiMessage.channel,
-          note: midiMessage.note,
-          controller: midiMessage.controller,
-          value: midiMessage.value,
-          direction: triggerDirection as "increment" | "decrement" | undefined
-        };
-        
-        console.log("Created new trigger:", newTrigger);
-        console.log("Calling handleMidiTriggerChange with:", { groupId, triggerId, newTrigger });
-
-        // Set the MIDI trigger
-        handleMidiTriggerChange(groupId, triggerId, newTrigger);
-        
-        // Check if this group is now complete using latest config
-        // Use a longer delay to ensure state updates are fully processed
-        setTimeout(() => {
-          const updatedConfig = configRef.current;
-          const updatedGroup = updatedConfig.midiTriggerGroups.find(g => g.id === groupId);
-          if (updatedGroup) {
-            const remainingEmpty = updatedGroup.triggers.filter(t => t.trigger === null).length;
-            
-            if (remainingEmpty === 0) { // This group is now complete
-              addToast({
-                title: "MIDI Group Complete",
-                description: `Group "${targetGroup.name}" completed with all ${requiredTriggers.length} triggers`,
-                color: "success"
-              });
-              
-              // Create new group for next detection
-              const newGroupId = crypto.randomUUID();
-              const newGroupName = `Group ${updatedConfig.midiTriggerGroups.length + 1}`;
-              const newGroup: MidiTriggerGroup = {
-                id: newGroupId,
-                name: newGroupName,
-                triggers: requiredTriggers.map(trigger => ({
-                  triggerId: trigger,
-                  trigger: null
-                }))
-              };
-              
-              // Update config and immediately update the ref to ensure consistency
-              setConfig(prev => {
-                const newConfig = {
-                  ...prev,
-                  midiTriggerGroups: [...prev.midiTriggerGroups, newGroup]
-                };
-                // Update the ref immediately to ensure consistency
-                configRef.current = newConfig;
-                return newConfig;
-              });
-              
-              // Set the new target to the first trigger of the new group
-              const newTarget = {
-                groupId: newGroupId,
-                triggerId: requiredTriggers[0]
-              };
-              
-              setCurrentDetectionTarget(newTarget);
-              // Update the ref immediately to ensure consistency
-              currentDetectionTargetRef.current = newTarget;
-              
-              setMidiDetectionCount(prev => prev + 1);
-              
-              // Clear any pending MIDI detection timeout to prevent processing old messages
-              if (midiDetectionTimeoutRef.current) {
-                clearTimeout(midiDetectionTimeoutRef.current);
-                midiDetectionTimeoutRef.current = null;
-              }
-              
-              // Reset the last detection time to prevent immediate processing of queued messages
-              lastMidiDetectionTimeRef.current = Date.now();
-            } else {
-              // Find the next empty trigger in this group
-              const nextEmptyTrigger = updatedGroup.triggers.find(t => t.trigger === null);
-              if (nextEmptyTrigger) {
-                const nextTarget = {
-                  groupId: groupId,
-                  triggerId: nextEmptyTrigger.triggerId
-                };
-                setCurrentDetectionTarget(nextTarget);
-                // Update the ref immediately to ensure consistency
-                currentDetectionTargetRef.current = nextTarget;
-              }
-            }
-          }
-        }, 200); // Increased delay to ensure state is fully updated
-      }
-    }
-  }, []);
+    // Small delay to ensure state is updated
+    setTimeout(() => {
+      moveToNextDetectionTarget();
+    }, 100);
+  }, [isListeningForMidi, currentDetectionTarget, moveToNextDetectionTarget]);
 
   // Add selected key
   const addSelectedKey = (key: string | string[] | KeyCombination) => {
@@ -1284,7 +1268,13 @@ export const BulkTemplateInitializer: React.FC<BulkTemplateInitializerProps> = (
                                undefined) : 
                               undefined}
                             externalListening={isListeningForMidi && currentDetectionTarget?.groupId === group.id && currentDetectionTarget?.triggerId === trigger.triggerId} // Only this specific trigger
-                            onStopExternalListening={stopIterativeMidiDetection} // Allow stopping from any trigger selector
+                            onStopExternalListening={() => {
+                              // When external listening stops (MIDI trigger is set), this will be called
+                              // But we don't want to stop the entire auto-detection process
+                              console.log("MIDI trigger set, auto-detection will continue to next trigger");
+                            }}
+                            autoListen={isListeningForMidi && currentDetectionTarget?.groupId === group.id && currentDetectionTarget?.triggerId === trigger.triggerId}
+                            lastProcessedTimestamp={lastProcessedTimestampRef.current}
                           />
                         </div>
                       </div>

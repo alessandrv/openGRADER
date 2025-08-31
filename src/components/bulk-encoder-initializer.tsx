@@ -493,9 +493,7 @@ export const BulkEncoderInitializer: React.FC<BulkEncoderInitializerProps> = ({
       if (trigger.value !== undefined) {
         description += ` / ${trigger.value}`;
       }
-      if (trigger.direction) {
-        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
-      }
+      
       return description;
     }
     if (trigger.type === "noteon") {
@@ -503,9 +501,7 @@ export const BulkEncoderInitializer: React.FC<BulkEncoderInitializerProps> = ({
       if (trigger.value !== undefined) {
         description += ` / ${trigger.value}`;
       }
-      if (trigger.direction) {
-        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
-      }
+      
       return description;
     }
     if (trigger.type === "noteoff") {
@@ -513,9 +509,7 @@ export const BulkEncoderInitializer: React.FC<BulkEncoderInitializerProps> = ({
       if (trigger.value !== undefined) {
         description += ` / ${trigger.value}`;
       }
-      if (trigger.direction) {
-        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
-      }
+     
       return description;
     }
     return trigger.type;

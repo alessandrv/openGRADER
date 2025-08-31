@@ -58,6 +58,10 @@ pub struct AppState {
     global_settings: Mutex<GlobalSettings>,
     // Track last macro trigger time per group for delay enforcement
     last_group_triggers: Mutex<HashMap<String, std::time::Instant>>,
+    // Track a monotonically increasing session id per group to guard concurrent triggers
+    group_sessions: Mutex<HashMap<String, u64>>, 
+    // Notifier to signal completion of before_actions per group/session
+    before_notifiers: Mutex<HashMap<String, std::sync::Arc<tokio::sync::Notify>>>,
 }
 
 static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
@@ -73,6 +77,8 @@ static APP_STATE: Lazy<Arc<AppState>> = Lazy::new(|| {
         before_action_states: Mutex::new(HashMap::new()),
         global_settings: Mutex::new(GlobalSettings::default()),
         last_group_triggers: Mutex::new(HashMap::new()),
+    group_sessions: Mutex::new(HashMap::new()),
+    before_notifiers: Mutex::new(HashMap::new()),
     })
 });
 
@@ -715,6 +721,64 @@ fn calculate_trigger_delay(group_key: &str) -> Option<std::time::Duration> {
     delay
 }
 
+// --- Session management helpers --------------------------------------------------
+fn begin_group_session(group_key: &str) -> u64 {
+    let mut sessions = APP_STATE.group_sessions.lock().unwrap();
+    let entry = sessions.entry(group_key.to_string()).or_insert(0);
+    *entry = entry.saturating_add(1);
+    *entry
+}
+
+fn current_group_session(group_key: &str) -> u64 {
+    let sessions = APP_STATE.group_sessions.lock().unwrap();
+    *sessions.get(group_key).unwrap_or(&0)
+}
+
+fn is_current_session(group_key: &str, session_id: u64) -> bool {
+    current_group_session(group_key) == session_id
+}
+
+// Try to mark before-actions as started atomically. Returns true if we set it now.
+fn try_mark_before_started(state_key: &str) -> bool {
+    let mut before_action_states = APP_STATE.before_action_states.lock().unwrap();
+    if before_action_states.contains_key(state_key) {
+        return false;
+    }
+    before_action_states.insert(
+        state_key.to_string(),
+        BeforeActionState {
+            last_executed: std::time::Instant::now(),
+            cooldown: std::time::Duration::from_secs(0),
+        },
+    );
+    true
+}
+
+fn set_before_notifier(group_key: &str, notify: std::sync::Arc<tokio::sync::Notify>) {
+    APP_STATE
+        .before_notifiers
+        .lock()
+        .unwrap()
+        .insert(group_key.to_string(), notify);
+}
+
+fn take_before_notifier(group_key: &str) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+    APP_STATE
+        .before_notifiers
+        .lock()
+        .unwrap()
+        .remove(group_key)
+}
+
+fn get_before_notifier(group_key: &str) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+    APP_STATE
+        .before_notifiers
+        .lock()
+        .unwrap()
+        .get(group_key)
+        .cloned()
+}
+
 async fn handle_macro_trigger<R: Runtime>(
     macro_config: MacroConfig,
     app_handle: AppHandle<R>,
@@ -722,33 +786,81 @@ async fn handle_macro_trigger<R: Runtime>(
     let group_key = macro_config.groupId.as_ref()
         .unwrap_or(&macro_config.id)
         .clone();
+    // Start a new session for this group to invalidate any concurrent older flows
+    let session_id = begin_group_session(&group_key);
+
+    // Inform frontend that this macro was triggered (for MIDI monitor UI)
+    #[derive(Debug, Clone, Serialize)]
+    struct RustMacroTriggerEvent {
+        macro_id: String,
+        macro_name: String,
+        group_id: Option<String>,
+        triggered_at: u64,
+    }
+    let now_ms: u64 = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(dur) => dur.as_millis() as u64,
+        Err(_) => 0,
+    };
+    let trigger_payload = RustMacroTriggerEvent {
+        macro_id: macro_config.id.clone(),
+        macro_name: macro_config.name.clone(),
+        group_id: macro_config.groupId.clone(),
+        triggered_at: now_ms,
+    };
+    let _ = app_handle.emit("macro-trigger", trigger_payload);
     
-    // Calculate and apply delay if needed
+    // 1) Immediately stop any other active group by executing their after_actions.
+    //    This ensures the previous group is properly closed before we consider delays
+    //    for the new group start.
+    execute_pending_after_actions(&group_key, &app_handle).await;
+
+    // 2) Cancel any existing timer for this same group to reset inactivity timeout
+    //    without re-triggering before actions on rapid re-triggers within the window.
+    cancel_existing_macro_task(&group_key);
+
+    // 3) Apply inter-group trigger delay (if configured) AFTER we closed other groups,
+    //    so the previous group's after_actions happen immediately and the new group's
+    //    before/main are delayed as requested.
     if let Some(delay) = calculate_trigger_delay(&group_key) {
         midi_log!("Delaying macro trigger by {:?}", delay);
         tokio::time::sleep(delay).await;
     }
-    
+
+    // If a newer session started while we were waiting, bail out
+    if !is_current_session(&group_key, session_id) {
+        midi_log!("Session outdated for group {}, skipping trigger handling", group_key);
+        return;
+    }
+
     midi_log!("Macro triggered: {} (timeout: {:?}ms)", 
         macro_config.name, macro_config.timeout);
-    
-    // Execute any pending after actions from other macros
-    execute_pending_after_actions(&group_key, &app_handle).await;
-    
-    // Handle the current macro's state
-    cancel_existing_macro_task(&group_key);
-    
-    // Execute before actions if needed
-    if should_execute_before_actions(&group_key) {
+
+    // 4) Execute before actions only once per active session (until after_actions run)
+    if try_mark_before_started(&group_key) {
+        // Publish a notifier so subsequent triggers wait for before completion
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        set_before_notifier(&group_key, notify.clone());
         execute_before_actions(&macro_config, &app_handle).await;
+        // Notify all waiters that before_actions finished (including any Delay)
+        if let Some(notifier) = take_before_notifier(&group_key) {
+            notifier.notify_waiters();
+        }
+    } else if let Some(notifier) = get_before_notifier(&group_key) {
+        // Before is in progress; wait until it completes before running main
+        notifier.notified().await;
+        // Re-check session still current after waiting
+        if !is_current_session(&group_key, session_id) {
+            midi_log!("Session outdated after waiting for before on group {}, skipping", group_key);
+            return;
+        }
     }
-    
-    // Execute main actions
+
+    // 5) Execute main actions for this trigger
     execute_main_actions(&macro_config, &app_handle).await;
-    
-    // Schedule after actions if timeout is specified
+
+    // 6) Schedule/Reset after-actions timer based on timeout
     if let Some(timeout) = macro_config.timeout {
-        schedule_after_actions(macro_config, app_handle, timeout).await;
+        schedule_after_actions(macro_config, app_handle, timeout, session_id).await;
     }
 }
 
@@ -810,8 +922,9 @@ async fn execute_pending_after_actions<R: Runtime>(
                 }
             }
             
-            // Clean up before_action_state
+            // Clean up before_action_state and any notifier
             APP_STATE.before_action_states.lock().unwrap().remove(&key);
+            APP_STATE.before_notifiers.lock().unwrap().remove(&key);
         }
     }
 }
@@ -856,18 +969,7 @@ async fn execute_before_actions<R: Runtime>(
             }
         }
         
-        // Mark as executed
-        let state_key = macro_config.groupId.as_ref()
-            .unwrap_or(&macro_config.id)
-            .clone();
-        
-        APP_STATE.before_action_states.lock().unwrap().insert(
-            state_key,
-            BeforeActionState {
-                last_executed: std::time::Instant::now(),
-                cooldown: std::time::Duration::from_secs(0),
-            }
-        );
+    // Marking moved to try_mark_before_started to avoid races
     }
 }
 
@@ -898,6 +1000,7 @@ async fn schedule_after_actions<R: Runtime>(
     macro_config: MacroConfig,
     app_handle: AppHandle<R>,
     timeout_ms: u32,
+    session_id: u64,
 ) {
     let task_key = macro_config.groupId.as_ref()
         .unwrap_or(&macro_config.id)
@@ -908,8 +1011,15 @@ async fn schedule_after_actions<R: Runtime>(
         .map_or(false, |a| !a.is_empty());
     
     let task_key_for_closure = task_key.clone();
+    let task_key_for_check = task_key.clone();
     let abort_handle = tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(timeout_ms as u64)).await;
+
+        // If a new session started, skip executing after-actions
+        if !is_current_session(&task_key_for_check, session_id) {
+            midi_log!("After-actions skipped due to newer session for group {}", task_key_for_check);
+            return;
+        }
         
         if has_after_actions {
             if let Some(after_actions) = &macro_config.after_actions {
@@ -933,7 +1043,8 @@ async fn schedule_after_actions<R: Runtime>(
         
         // Clean up
         APP_STATE.active_macros.lock().unwrap().remove(&task_key_for_closure);
-        APP_STATE.before_action_states.lock().unwrap().remove(&task_key_for_closure);
+    APP_STATE.before_action_states.lock().unwrap().remove(&task_key_for_closure);
+    APP_STATE.before_notifiers.lock().unwrap().remove(&task_key_for_closure);
     }).abort_handle();
     
     // Store the task
@@ -1009,13 +1120,8 @@ async fn start_midi_listening_rust<R: Runtime>(
             None => return,
         };
         
-        // Always emit the raw MIDI event for detection purposes
-        // This ensures the frontend can detect MIDI messages even when no macros are active
-        emit_midi_event(&midi_data, timestamp, &app_handle_clone);
-        
-        // Only process macro triggers if there are registered macros
-        let registered_macros = APP_STATE.registered_macros.lock().unwrap();
-        if registered_macros.is_empty() {
+        // Early exit if no macros registered
+        if APP_STATE.registered_macros.lock().unwrap().is_empty() {
             return;
         }
         
@@ -1023,6 +1129,7 @@ async fn start_midi_listening_rust<R: Runtime>(
         
         // Get macros and settings in a single lock acquisition
         let (macros_to_check, _settings) = {
+            let registered_macros = APP_STATE.registered_macros.lock().unwrap();
             let settings = APP_STATE.global_settings.lock().unwrap();
             (registered_macros.clone(), settings.clone())
         };
@@ -1041,6 +1148,9 @@ async fn start_midi_listening_rust<R: Runtime>(
                 });
             }
         }
+        
+        // Always emit the raw MIDI event
+        emit_midi_event(&midi_data, timestamp, &app_handle_for_macros);
         
     }, ())
     .map_err(|e| create_midi_error("Failed to connect to MIDI device", e))?;

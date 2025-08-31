@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import { Button, Card, Chip, Divider, Switch, addToast, Accordion, AccordionItem, useDisclosure, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Popover, PopoverTrigger, PopoverContent, Tooltip } from "@heroui/react";
+import { Button, Card, Chip, Divider, Switch, addToast, Accordion, AccordionItem, useDisclosure, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Popover, PopoverTrigger, PopoverContent, Tooltip, Checkbox } from "@heroui/react";
 import { Icon } from "@iconify/react";
 import { invoke } from '@tauri-apps/api/core';
 import { MacroDefinition, Action, MacroCategory } from "../types/macro";
 import { registerMacro, MacroConfig, ActionType, ActionParams, MacroAction } from "../lib/tauri";
 import { motion, AnimatePresence, Reorder, useDragControls, LayoutGroup } from "framer-motion";
+import { MidiTriggerSelector } from "./midi-trigger-selector";
 
 // Extended type for macros with additional properties for the UI
 interface ExtendedMacroDefinition extends MacroDefinition {
@@ -272,6 +273,64 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     x: 0,
     y: 0
   });
+
+  // Inject CSS for temporary highlight effect on navigated macro
+  React.useEffect(() => {
+    const id = 'macro-highlight-style';
+    if (!document.getElementById(id)) {
+      const style = document.createElement('style');
+      style.id = id;
+      style.textContent = `
+        .macro-highlight {
+          outline: 2px solid var(--heroui-colors-primary, #3b82f6);
+          box-shadow: 0 0 0 4px rgba(59,130,246,0.25);
+          transition: box-shadow 0.3s ease, outline-color 0.3s ease;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    return () => {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    };
+  }, []);
+
+  // Handle navigation from MIDI log: expand category, scroll to macro, highlight
+  React.useEffect(() => {
+    const onNavigate = () => {
+      const macroId = localStorage.getItem('scrollToMacroId') || '';
+      const expandCategoryId = localStorage.getItem('expandCategoryId') || '';
+      if (!macroId) return;
+      // Expand the requested category if present
+      if (expandCategoryId) {
+        setExpandedCategories(prev => {
+          if (prev.has(expandCategoryId)) return prev;
+          const next = new Set(prev);
+          next.add(expandCategoryId);
+          // Persist to localStorage to align with existing code
+          const updated = categories.map(cat => ({ ...cat, isExpanded: next.has(cat.id) }));
+          localStorage.setItem('macroCategories', JSON.stringify(updated));
+          return next;
+        });
+      }
+      // Give React time to render expanded content
+      setTimeout(() => {
+        const el = document.querySelector(`[data-macro-id="${macroId}"]`) as HTMLElement | null
+          || document.getElementById(`macro-${macroId}`);
+        if (el && 'scrollIntoView' in el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Apply temporary highlight
+          el.classList.add('macro-highlight');
+          setTimeout(() => el.classList.remove('macro-highlight'), 1400);
+        }
+        // Clear hints
+        localStorage.removeItem('scrollToMacroId');
+        // keep expandCategoryId so user sees it expanded
+      }, 120);
+    };
+    window.addEventListener('navigate-to-macros' as any, onNavigate);
+    return () => window.removeEventListener('navigate-to-macros' as any, onNavigate);
+  }, [categories, setExpandedCategories]);
   
   // Calculate the displayed macro count, grouping by groupId
   const displayedMacroCount = React.useMemo(() => {
@@ -311,20 +370,20 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       scale: 1, 
       opacity: 1, 
       boxShadow: "0px 1px 3px rgba(0, 0, 0, 0.1)",
-      transition: { duration: 0.2, ease: "easeOut" }
+      transition: { duration: 0.2, ease: "easeOut" as const }
     },
     dragging: { 
       scale: 1.05, 
       opacity: 0.9, 
       boxShadow: "0px 8px 25px rgba(0, 0, 0, 0.3)",
       zIndex: 1000,
-      transition: { duration: 0.2, ease: "easeOut" }
+      transition: { duration: 0.2, ease: "easeOut" as const }
     },
     dropped: {
       scale: 1,
       opacity: 1,
       boxShadow: "0px 1px 3px rgba(0, 0, 0, 0.1)",
-      transition: { duration: 0.3, ease: "easeOut" }
+      transition: { duration: 0.3, ease: "easeOut" as const }
     }
   };
 
@@ -333,13 +392,13 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       backgroundColor: "transparent",
       borderColor: "transparent",
       scale: 1,
-      transition: { duration: 0.2, ease: "easeOut" }
+      transition: { duration: 0.2, ease: "easeOut" as const }
     },
     active: { 
       backgroundColor: "rgba(var(--primary-rgb), 0.1)",
       borderColor: "rgba(var(--primary-rgb), 0.3)",
       scale: 1.02,
-      transition: { duration: 0.2, ease: "easeOut" }
+      transition: { duration: 0.2, ease: "easeOut" as const }
     }
   };
 
@@ -367,13 +426,13 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       opacity: 1, 
       y: 0,
       scale: 1,
-      transition: { duration: 0.3, ease: "easeOut" }
+      transition: { duration: 0.3, ease: "easeOut" as const }
     },
     exit: { 
       opacity: 0, 
       y: -20,
       scale: 0.95,
-      transition: { duration: 0.2, ease: "easeIn" }
+      transition: { duration: 0.2, ease: "easeIn" as const }
     }
   };
 
@@ -688,6 +747,61 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     isCategoryActivation: false,
     isInternalConflict: false,
     selectedMacrosToKeep: new Set()
+  });
+  
+  // Add state for import preference modal
+  const [importPreferenceModal, setImportPreferenceModal] = useState<{
+    isOpen: boolean;
+    importData: any;
+    fileName: string;
+  }>({
+    isOpen: false,
+    importData: null,
+    fileName: ""
+  });
+  
+  // Add state for MIDI redefinition process
+  const [midiRedefinitionModal, setMidiRedefinitionModal] = useState<{
+    isOpen: boolean;
+    currentMacro: any;
+    macroIndex: number;
+    totalMacros: number;
+    importData: any;
+    redefinedMacros: any[];
+    incrementTrigger: MacroDefinition['trigger'] | null;
+    decrementTrigger: MacroDefinition['trigger'] | null;
+    clickTrigger: MacroDefinition['trigger'] | null;
+    lastProcessedTimestamp: number; // Add timestamp to prevent stale message processing
+    autoAdvanceToNextGroup: boolean; // Auto-advance when all triggers are set
+    stopListeningCounter: number; // Counter to force stop listening
+  }>({
+    isOpen: false,
+    currentMacro: null,
+    macroIndex: 0,
+    totalMacros: 0,
+    importData: null,
+    redefinedMacros: [],
+    incrementTrigger: null,
+    decrementTrigger: null,
+    clickTrigger: null,
+    lastProcessedTimestamp: 0,
+    autoAdvanceToNextGroup: false,
+    stopListeningCounter: 0
+  });
+
+  // Add state for import summary modal
+  const [importSummaryModal, setImportSummaryModal] = useState<{
+    isOpen: boolean;
+    importData: any;
+    redefinedMacros: any[];
+    duplicates: { originalId: string; importedMacro: any; }[];
+    skipDuplicates: Set<string>; // Track which duplicates to skip by their identifier
+  }>({
+    isOpen: false,
+    importData: null,
+    redefinedMacros: [],
+    duplicates: [],
+    skipDuplicates: new Set()
   });
   
   // Reference to track elements being deleted with animation
@@ -1685,7 +1799,9 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         } else if (action.params.button === "scroll-down") {
           return `Scroll down (amount: ${action.params.amount || 3})`;
         } else {
-          return `${action.params.button} click at (${action.params.x || 0}, ${action.params.y || 0})`;
+          const btn = (action.params.button || "left");
+          const label = btn.charAt(0).toUpperCase() + btn.slice(1);
+          return `${label} Click${action.params.hold ? ' (hold)' : ''}`;
         }
       case "mouserelease":
         return `Release ${action.params.button} button`;
@@ -1711,27 +1827,21 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       if (trigger.value !== undefined) {
         description += ` / ${trigger.value}`;
       }
-      if (trigger.direction) {
-        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
-      }
+    
       return description;
     } else if (trigger.type === "noteoff") {
       let description = `Note Off ${trigger.note} Ch ${trigger.channel}`;
       if (trigger.value !== undefined) {
         description += ` / ${trigger.value}`;
       }
-      if (trigger.direction) {
-        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
-      }
+      
       return description;
     } else if (trigger.type === "controlchange") {
       let description = `CC ${trigger.controller} Ch ${trigger.channel}`;
       if (trigger.value !== undefined) {
         description += ` / ${trigger.value}`;
       }
-      if (trigger.direction) {
-        description += ` (${trigger.direction === 'increment' ? '↑' : '↓'})`;
-      }
+     
       return description;
     }
     return trigger.type;
@@ -3033,13 +3143,90 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
   // Export/Import functions
   const handleExportMacros = () => {
     try {
-      // Prepare data to export (macros and categories)
+      // Group macros by groupId for better structure
+      const groupedMacros: Record<string, any> = {};
+      const standaloneMacros: MacroDefinition[] = [];
+      
+      macros.forEach(macro => {
+        if (macro.groupId) {
+          // This is part of a group
+          if (!groupedMacros[macro.groupId]) {
+            // Initialize group structure
+            const firstMacro = macro;
+            groupedMacros[macro.groupId] = {
+              groupId: macro.groupId,
+              category: macro.categoryId || 'default',
+              name: firstMacro.name.replace(/ \(.*\)$/, ""), // Remove suffix
+              type: 'standard', // Will be determined based on group contents
+              beforeActions: firstMacro.beforeActions || [],
+              afterActions: firstMacro.afterActions || [],
+              timeout: firstMacro.timeout,
+              incrementActions: null,
+              decrementActions: null,
+              clickActions: null
+            };
+          }
+          
+          // Add actions based on macro type
+          const group = groupedMacros[macro.groupId];
+          if (macro.type === 'encoder-increment') {
+            group.incrementActions = {
+              trigger: macro.trigger,
+              actions: macro.actions
+            };
+            group.type = 'encoder';
+          } else if (macro.type === 'encoder-decrement') {
+            group.decrementActions = {
+              trigger: macro.trigger,
+              actions: macro.actions
+            };
+            group.type = 'encoder';
+          } else if (macro.type === 'encoder-click') {
+            group.clickActions = {
+              trigger: macro.trigger,
+              actions: macro.actions
+            };
+            group.type = 'encoder-click';
+          } else {
+            // Standard macro - add to actions
+            if (!group.actions) group.actions = [];
+            group.actions.push({
+              trigger: macro.trigger,
+              actions: macro.actions
+            });
+          }
+        } else {
+          // Standalone macro
+          standaloneMacros.push(macro);
+        }
+      });
+      
+      // Convert grouped macros to array and add standalone macros
+      const exportMacros = [
+        ...Object.values(groupedMacros),
+        ...standaloneMacros.map(macro => ({
+          id: macro.id,
+          category: macro.categoryId || 'default',
+          name: macro.name,
+          type: 'standard',
+          trigger: macro.trigger,
+          actions: macro.actions,
+          beforeActions: macro.beforeActions || [],
+          afterActions: macro.afterActions || [],
+          timeout: macro.timeout
+        }))
+      ];
+      
+      // Prepare data to export with new structure
       const exportData = {
-        macros: macros,
+        macros: exportMacros,
         categories: categories,
         activeMacros: [...activeMacros],
         categoryOrders: categoryOrders,
-        version: "1.0" // Add version to help with future imports
+        version: "1.1", // Updated version for new structure
+        exportDate: new Date().toISOString(),
+        totalGroups: Object.keys(groupedMacros).length,
+        totalStandalone: standaloneMacros.length
       };
       
       // Convert to JSON
@@ -3058,9 +3245,12 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
       
+      // Count total macro entities (groups and standalone macros)
+      const totalMacroEntities = Object.keys(groupedMacros).length + standaloneMacros.length;
+      
       addToast({
         title: "Export Successful",
-        description: "Your macros have been exported successfully",
+        description: `Exported ${totalMacroEntities} macro${totalMacroEntities !== 1 ? 's' : ''}`,
         color: "success"
       });
     } catch (err) {
@@ -3089,7 +3279,18 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     reader.onload = (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        handleImportMacros(data);
+        
+        // Validate the data structure
+        if (!data || typeof data !== 'object' || !Array.isArray(data.macros)) {
+          throw new Error("Invalid import data format");
+        }
+        
+        // Show import preference modal instead of directly importing
+        setImportPreferenceModal({
+          isOpen: true,
+          importData: data,
+          fileName: file.name
+        });
         
         // Reset the file input
         if (fileInputRef.current) {
@@ -3126,6 +3327,385 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
     reader.readAsText(file);
   };
   
+  // Handle import as-is (original behavior)
+  const handleImportAsIs = () => {
+    if (importPreferenceModal.importData) {
+      handleImportMacros(importPreferenceModal.importData);
+      setImportPreferenceModal({ isOpen: false, importData: null, fileName: "" });
+    }
+  };
+  
+  // Handle import with MIDI redefinition
+  const handleImportWithRedefinition = () => {
+    if (importPreferenceModal.importData) {
+      const data = importPreferenceModal.importData;
+      
+      // Process ALL macros - both grouped and standard macros need MIDI redefinition
+      // This ensures we don't skip any macros that need new MIDI triggers
+      const macrosToProcess = data.macros;
+      
+      console.log('Import with redefinition - macros to process:', macrosToProcess);
+      console.log('Total macros in import:', data.macros.length);
+      console.log('All macros will be processed for MIDI redefinition');
+      
+      if (macrosToProcess.length === 0) {
+        // No macros to process
+        console.log('No macros found, importing as-is');
+        handleImportMacros(data);
+        setImportPreferenceModal({ isOpen: false, importData: null, fileName: "" });
+        return;
+      }
+      
+      // Start MIDI redefinition process
+      console.log('Starting MIDI redefinition for', macrosToProcess.length, 'macros');
+      setMidiRedefinitionModal({
+        isOpen: true,
+        currentMacro: macrosToProcess[0],
+        macroIndex: 0,
+        totalMacros: macrosToProcess.length,
+        importData: data,
+        redefinedMacros: [],
+        incrementTrigger: null,
+        decrementTrigger: null,
+        clickTrigger: null,
+        lastProcessedTimestamp: Date.now(),
+        autoAdvanceToNextGroup: localStorage.getItem('autoAdvanceToNextGroup') === 'true',
+        stopListeningCounter: 0
+      });
+      
+      setImportPreferenceModal({ isOpen: false, importData: null, fileName: "" });
+    }
+  };
+  
+  // Handle MIDI trigger updates during redefinition
+  const handleMidiTriggerUpdate = (type: 'increment' | 'decrement' | 'click', trigger: MacroDefinition['trigger'] | null) => {
+    if (!trigger) return; // Don't process null triggers
+    
+    console.log(`MIDI trigger detected for ${type}:`, trigger);
+    
+    setMidiRedefinitionModal(prev => {
+      const updated = {
+        ...prev,
+        [type === 'increment' ? 'incrementTrigger' : type === 'decrement' ? 'decrementTrigger' : 'clickTrigger']: trigger,
+        lastProcessedTimestamp: Date.now() // Update timestamp to prevent reprocessing
+      };
+      
+      // Determine which triggers are required based on what's actually shown in the UI
+      const currentMacro = prev.currentMacro; // Use prev.currentMacro instead of midiRedefinitionModal.currentMacro
+      
+      // Check what trigger UI components are actually rendered
+      const showsIncrement = true; // Increment is always shown
+      const showsDecrement = !!(currentMacro?.decrementActions); // Decrement shown if decrementActions exist
+      const showsClick = !!(currentMacro?.clickActions); // Click shown if clickActions exist
+      
+      // For debugging: let's also check the old logic for comparison
+      const isEncoderMacro = currentMacro?.type?.includes('encoder');
+      const needsDecrement = isEncoderMacro && currentMacro?.decrementActions && currentMacro.decrementActions.length > 0;
+      const needsClick = isEncoderMacro && currentMacro?.clickActions && currentMacro.clickActions.length > 0;
+      
+      console.log('Macro analysis:', {
+        macroName: currentMacro?.name,
+        macroType: currentMacro?.type,
+        isEncoderMacro,
+        hasIncrementActions: !!currentMacro?.incrementActions,
+        hasDecrementActions: !!currentMacro?.decrementActions,
+        hasClickActions: !!currentMacro?.clickActions,
+        showsIncrement,
+        showsDecrement,
+        showsClick,
+        oldLogic: { needsDecrement, needsClick }
+      });
+      
+      // Check if all required triggers are detected BEFORE this update (using UI-based logic)
+      const hadIncrementBefore = prev.incrementTrigger !== null;
+      const hadDecrementBefore = !showsDecrement || prev.decrementTrigger !== null;
+      const hadClickBefore = !showsClick || prev.clickTrigger !== null;
+      const hadAllRequiredTriggersBefore = hadIncrementBefore && hadDecrementBefore && hadClickBefore;
+      
+      // Check if all required triggers are detected AFTER this update (using UI-based logic)
+      const hasIncrement = updated.incrementTrigger !== null;
+      const hasDecrement = !showsDecrement || updated.decrementTrigger !== null;
+      const hasClick = !showsClick || updated.clickTrigger !== null;
+      const hasAllRequiredTriggers = hasIncrement && hasDecrement && hasClick;
+      
+      console.log('Trigger requirements for macro:', currentMacro?.name, {
+        isEncoderMacro,
+        needsDecrement,
+        needsClick,
+        type: currentMacro?.type
+      });
+      console.log('Triggers before update:', {
+        increment: prev.incrementTrigger,
+        decrement: prev.decrementTrigger,
+        click: prev.clickTrigger,
+        hadAllBefore: hadAllRequiredTriggersBefore
+      });
+      console.log('Triggers after update:', {
+        increment: updated.incrementTrigger,
+        decrement: updated.decrementTrigger,
+        click: updated.clickTrigger,
+        hasAllAfter: hasAllRequiredTriggers
+      });
+      
+      // Auto-advance only if:
+      // 1. Checkbox is checked
+      // 2. All required triggers are NOW set (after this update)
+      // 3. NOT all triggers were set before this update (this is the completing trigger)
+      if (hasAllRequiredTriggers && !hadAllRequiredTriggersBefore && updated.autoAdvanceToNextGroup) {
+        console.log(`Auto-advancing to next macro - ${type} trigger was the last required trigger`);
+        
+        // Save current macro with redefined triggers
+        const redefinedMacro = {
+          ...updated.currentMacro,
+          incrementTrigger: updated.incrementTrigger,
+          decrementTrigger: updated.decrementTrigger,
+          clickTrigger: updated.clickTrigger
+        };
+        
+        const updatedRedefinedMacros = [...updated.redefinedMacros, redefinedMacro];
+        
+        if (updated.macroIndex + 1 >= updated.totalMacros) {
+          // All macros processed, show summary modal
+          setTimeout(() => {
+            const duplicates = detectDuplicates(updated.importData.macros, updatedRedefinedMacros);
+            
+            // Default: skip all duplicates (safer default)
+            const skipDuplicates = new Set(
+              duplicates.map(d => d.importedMacro.groupId || d.importedMacro.name)
+            );
+            
+            setImportSummaryModal({
+              isOpen: true,
+              importData: updated.importData,
+              redefinedMacros: updatedRedefinedMacros,
+              duplicates,
+              skipDuplicates
+            });
+            
+            // Close the redefinition modal
+            setMidiRedefinitionModal({
+              isOpen: false,
+              currentMacro: null,
+              macroIndex: 0,
+              totalMacros: 0,
+              importData: null,
+              redefinedMacros: [],
+              incrementTrigger: null,
+              decrementTrigger: null,
+              clickTrigger: null,
+              lastProcessedTimestamp: 0,
+              autoAdvanceToNextGroup: false,
+              stopListeningCounter: 0
+            });
+          }, 50);
+          
+          // Return current state with cleared triggers
+          return {
+            ...updated,
+            incrementTrigger: null,
+            decrementTrigger: null,
+            clickTrigger: null,
+            lastProcessedTimestamp: Date.now()
+          };
+        } else {
+          // Move to next macro in the same state update to prevent flash
+          const nextIndex = updated.macroIndex + 1;
+          const nextMacro = updated.importData.macros[nextIndex];
+          
+          return {
+            ...updated,
+            currentMacro: nextMacro,
+            macroIndex: nextIndex,
+            redefinedMacros: updatedRedefinedMacros,
+            incrementTrigger: null,
+            decrementTrigger: null,
+            clickTrigger: null,
+            lastProcessedTimestamp: Date.now()
+          };
+        }
+      } else {
+        console.log('Not auto-advancing because:', {
+          hasAllRequiredTriggers,
+          hadAllRequiredTriggersBefore,
+          autoAdvanceEnabled: updated.autoAdvanceToNextGroup,
+          shouldAdvance: hasAllRequiredTriggers && !hadAllRequiredTriggersBefore && updated.autoAdvanceToNextGroup
+        });
+      }
+      
+      return updated;
+    });
+  };
+  
+  // Function to detect duplicate macros by name and groupId
+  const detectDuplicates = (importedMacros: any[], redefinedMacros: any[]) => {
+    const existingMacros = JSON.parse(localStorage.getItem("midiMacros") || "[]");
+    const duplicates: { originalId: string; importedMacro: any; }[] = [];
+    
+    // Only check macros that were actually processed (in redefinedMacros)
+    // Find the corresponding original macro for each redefined macro
+    redefinedMacros.forEach(redefinedMacro => {
+      // Find the original macro from importedMacros that corresponds to this redefinedMacro
+      const originalMacro = importedMacros.find(macro => {
+        if (redefinedMacro.groupId && macro.groupId) {
+          return redefinedMacro.groupId === macro.groupId;
+        } else {
+          return redefinedMacro.name === macro.name;
+        }
+      });
+      
+      if (!originalMacro) return; // Skip if no corresponding original macro found
+      
+      // Check for duplicates by name and groupId (for encoder macros) or just name (for standard macros)
+      const isDuplicate = existingMacros.some((existing: any) => {
+        if (originalMacro.groupId) {
+          // For encoder macros, check groupId
+          return existing.groupId === originalMacro.groupId;
+        } else {
+          // For standard macros, check name
+          return existing.name === originalMacro.name;
+        }
+      });
+      
+      if (isDuplicate) {
+        const existingMacro = existingMacros.find((existing: any) => {
+          if (originalMacro.groupId) {
+            return existing.groupId === originalMacro.groupId;
+          } else {
+            return existing.name === originalMacro.name;
+          }
+        });
+        
+        duplicates.push({
+          originalId: existingMacro.id,
+          importedMacro: originalMacro
+        });
+      }
+    });
+    
+    return duplicates;
+  };
+
+  // Handle next macro in redefinition process
+  const handleNextMacro = () => {
+    const current = midiRedefinitionModal;
+    
+    // Save current macro with redefined triggers (even if some are missing)
+    const redefinedMacro = {
+      ...current.currentMacro,
+      incrementTrigger: current.incrementTrigger,
+      decrementTrigger: current.decrementTrigger,
+      clickTrigger: current.clickTrigger
+    };
+    
+    const updatedRedefinedMacros = [...current.redefinedMacros, redefinedMacro];
+    
+    if (current.macroIndex + 1 >= current.totalMacros) {
+      // All macros processed, show summary modal
+      const duplicates = detectDuplicates(current.importData.macros, updatedRedefinedMacros);
+      
+      // Default: skip all duplicates (safer default)
+      const skipDuplicates = new Set(
+        duplicates.map(d => d.importedMacro.groupId || d.importedMacro.name)
+      );
+      
+      setImportSummaryModal({
+        isOpen: true,
+        importData: current.importData,
+        redefinedMacros: updatedRedefinedMacros,
+        duplicates,
+        skipDuplicates
+      });
+      
+      // Close the redefinition modal
+      setMidiRedefinitionModal({
+        isOpen: false,
+        currentMacro: null,
+        macroIndex: 0,
+        totalMacros: 0,
+        importData: null,
+        redefinedMacros: [],
+        incrementTrigger: null,
+        decrementTrigger: null,
+        clickTrigger: null,
+        lastProcessedTimestamp: 0,
+        autoAdvanceToNextGroup: false,
+        stopListeningCounter: 0
+      });
+    } else {
+      // Move to next macro
+      const nextIndex = current.macroIndex + 1;
+      const nextMacro = current.importData.macros[nextIndex]; // Get next macro by index, not filtered
+      
+      setMidiRedefinitionModal({
+        ...current,
+        currentMacro: nextMacro,
+        macroIndex: nextIndex,
+        redefinedMacros: updatedRedefinedMacros,
+        incrementTrigger: null,
+        decrementTrigger: null,
+        clickTrigger: null,
+        lastProcessedTimestamp: Date.now() // Reset timestamp when moving to next macro
+      });
+    }
+  };
+  
+  // Handle skipping current macro
+  const handleSkipMacro = () => {
+    const current = midiRedefinitionModal;
+    
+    if (current.macroIndex + 1 >= current.totalMacros) {
+      // All macros processed, show summary modal (but exclude the skipped macro)
+      // Don't add the current skipped macro to redefinedMacros - just use existing ones
+      const updatedRedefinedMacros = current.redefinedMacros; // Don't include the skipped macro
+      
+      const duplicates = detectDuplicates(current.importData.macros, updatedRedefinedMacros);
+      
+      // Default: skip all duplicates (safer default)
+      const skipDuplicates = new Set(
+        duplicates.map(d => d.importedMacro.groupId || d.importedMacro.name)
+      );
+      
+      setImportSummaryModal({
+        isOpen: true,
+        importData: current.importData,
+        redefinedMacros: updatedRedefinedMacros,
+        duplicates,
+        skipDuplicates
+      });
+      
+      // Close the redefinition modal
+      setMidiRedefinitionModal({
+        isOpen: false,
+        currentMacro: null,
+        macroIndex: 0,
+        totalMacros: 0,
+        importData: null,
+        redefinedMacros: [],
+        incrementTrigger: null,
+        decrementTrigger: null,
+        clickTrigger: null,
+        lastProcessedTimestamp: 0,
+        autoAdvanceToNextGroup: false,
+        stopListeningCounter: 0
+      });
+    } else {
+      // Move to next macro (don't add the skipped macro to redefinedMacros)
+      const nextIndex = current.macroIndex + 1;
+      const nextMacro = current.importData.macros[nextIndex]; // Get next macro by index, not filtered
+      
+      setMidiRedefinitionModal({
+        ...current,
+        currentMacro: nextMacro,
+        macroIndex: nextIndex,
+        // Keep redefinedMacros as is - don't add the skipped macro
+        incrementTrigger: null,
+        decrementTrigger: null,
+        clickTrigger: null,
+        lastProcessedTimestamp: Date.now() // Reset timestamp when moving to next macro
+      });
+    }
+  };
+  
   // Add import function
   const handleImportMacros = (data: any) => {
     try {
@@ -3138,14 +3718,125 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         throw new Error("Import data does not contain macros array");
       }
       
-      // First, create a map of existing macro IDs for quick lookup
+      // Convert imported data back to the internal format
+      const convertedMacros: MacroDefinition[] = [];
+      
+      data.macros.forEach((importedMacro: any) => {
+        if (importedMacro.groupId) {
+          // This is a grouped macro - convert back to individual macros
+          const groupId = importedMacro.groupId;
+          
+                // Convert increment actions
+      if (importedMacro.incrementActions) {
+        convertedMacros.push({
+          id: crypto.randomUUID(),
+          name: `${importedMacro.name} (Increment)`,
+          type: 'encoder-increment',
+          groupId: groupId,
+          categoryId: importedMacro.category,
+          trigger: importedMacro.incrementTrigger || importedMacro.incrementActions.trigger,
+          actions: importedMacro.incrementActions.actions,
+          beforeActions: importedMacro.beforeActions,
+          afterActions: importedMacro.afterActions,
+          timeout: importedMacro.timeout,
+          createdAt: new Date().toISOString()
+        });
+      }
+      
+      // Convert decrement actions
+      if (importedMacro.decrementActions) {
+        convertedMacros.push({
+          id: crypto.randomUUID(),
+          name: `${importedMacro.name} (Decrement)`,
+          type: 'encoder-decrement',
+          groupId: groupId,
+          categoryId: importedMacro.category,
+          trigger: importedMacro.decrementTrigger || importedMacro.decrementActions.trigger,
+          actions: importedMacro.decrementActions.actions,
+          beforeActions: importedMacro.beforeActions,
+          afterActions: importedMacro.afterActions,
+          timeout: importedMacro.timeout,
+          createdAt: new Date().toISOString()
+        });
+      }
+      
+      // Convert click actions
+      if (importedMacro.clickActions) {
+        convertedMacros.push({
+          id: crypto.randomUUID(),
+          name: `${importedMacro.name} (Click)`,
+          type: 'encoder-click',
+          groupId: groupId,
+          categoryId: importedMacro.category,
+          trigger: importedMacro.clickTrigger || importedMacro.clickActions.trigger,
+          actions: importedMacro.clickActions.actions,
+          beforeActions: importedMacro.beforeActions,
+          afterActions: importedMacro.afterActions,
+          timeout: importedMacro.timeout,
+          createdAt: new Date().toISOString()
+        });
+      }
+          
+          // Convert standard actions (if any)
+          if (importedMacro.actions && Array.isArray(importedMacro.actions)) {
+            importedMacro.actions.forEach((actionGroup: any, index: number) => {
+              convertedMacros.push({
+                id: crypto.randomUUID(),
+                name: `${importedMacro.name} (Action ${index + 1})`,
+                type: 'standard',
+                groupId: groupId,
+                categoryId: importedMacro.category,
+                trigger: actionGroup.trigger,
+                actions: actionGroup.actions,
+                beforeActions: importedMacro.beforeActions,
+                afterActions: importedMacro.afterActions,
+                timeout: importedMacro.timeout,
+                createdAt: new Date().toISOString()
+              });
+            });
+          }
+        } else {
+          // This is a standalone macro
+          convertedMacros.push({
+            id: importedMacro.id || crypto.randomUUID(),
+            name: importedMacro.name,
+            type: importedMacro.type || 'standard',
+            categoryId: importedMacro.category,
+            trigger: importedMacro.trigger || importedMacro.incrementTrigger,
+            actions: importedMacro.actions,
+            beforeActions: importedMacro.beforeActions || [],
+            afterActions: importedMacro.afterActions || [],
+            timeout: importedMacro.timeout,
+            createdAt: new Date().toISOString()
+          });
+        }
+      });
+      
+      // Create maps for duplicate detection - check both individual IDs and group IDs
       const existingMacroIds = new Set(macros.map(m => m.id));
+      const existingGroupIds = new Set(macros.filter(m => m.groupId).map(m => m.groupId));
       
-      // Count skipped macros
-      const skippedMacros = data.macros.filter((m: MacroDefinition) => existingMacroIds.has(m.id));
+      // Count skipped macros and filter out duplicates
+      const skippedMacros: MacroDefinition[] = [];
+      const newMacros: MacroDefinition[] = [];
       
-      // Filter out macros that already exist (by ID)
-      const newMacros = data.macros.filter((m: MacroDefinition) => !existingMacroIds.has(m.id));
+      convertedMacros.forEach(macro => {
+        if (macro.groupId) {
+          // This is a grouped macro - check if the group already exists
+          if (existingGroupIds.has(macro.groupId)) {
+            skippedMacros.push(macro);
+          } else {
+            newMacros.push(macro);
+          }
+        } else {
+          // This is a standalone macro - check if the individual macro already exists
+          if (existingMacroIds.has(macro.id)) {
+            skippedMacros.push(macro);
+          } else {
+            newMacros.push(macro);
+          }
+        }
+      });
       
       // Merge with existing macros
       const mergedMacros = [...macros, ...newMacros];
@@ -3198,10 +3889,34 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         localStorage.setItem("activeMidiMacros", JSON.stringify([...newActiveSet]));
       }
       
+      // Count unique macro entities (groups and standalone macros)
+      const uniqueMacros = new Set<string>();
+      
+      newMacros.forEach(macro => {
+        if (macro.groupId) {
+          uniqueMacros.add(macro.groupId);
+        } else {
+          uniqueMacros.add(macro.id);
+        }
+      });
+      
+      const totalMacroEntities = uniqueMacros.size;
+      
       // Create appropriate success message based on how many were imported vs. skipped
-      let successMessage = `Imported ${newMacros.length} new macros`;
+      let successMessage = `Imported ${totalMacroEntities} new macro${totalMacroEntities !== 1 ? 's' : ''}`;
+      
       if (skippedMacros.length > 0) {
-        successMessage += `, skipped ${skippedMacros.length} existing macros`;
+        // Count unique skipped entities for better messaging
+        const uniqueSkipped = new Set<string>();
+        skippedMacros.forEach(macro => {
+          if (macro.groupId) {
+            uniqueSkipped.add(macro.groupId);
+          } else {
+            uniqueSkipped.add(macro.id);
+          }
+        });
+        
+        successMessage += `, skipped ${uniqueSkipped.size} existing macro${uniqueSkipped.size !== 1 ? 's' : ''}`;
       }
       
       addToast({
@@ -3209,17 +3924,6 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         description: successMessage,
         color: "success"
       });
-      
-      // If macros were skipped, show an additional info message
-      if (skippedMacros.length > 0) {
-        setTimeout(() => {
-          addToast({
-            title: "Macros Skipped",
-            description: `${skippedMacros.length} macros were skipped because they already exist`,
-            color: "primary"
-          });
-        }, 300);
-      }
     } catch (err) {
       console.error("Error importing macros:", err);
       addToast({
@@ -4590,6 +5294,581 @@ export const MacrosList: React.FC<MacrosListProps> = ({ onEditMacro, onCreateTem
         </ModalContent>
       </Modal>
       
+      {/* Import Preference Modal */}
+      <Modal isOpen={importPreferenceModal.isOpen} onOpenChange={(open) => {
+        if (!open) {
+          setImportPreferenceModal({ isOpen: false, importData: null, fileName: "" });
+        }
+      }}>
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader>Import Macros</ModalHeader>
+              <ModalBody>
+                <div className="space-y-4">
+                  <p className="text-sm text-foreground-600">
+                    How would you like to import the macros from <span className="font-medium">{importPreferenceModal.fileName}</span>?
+                  </p>
+                  
+                  <div className="space-y-3">
+                    <Button
+                      color="primary"
+                      variant="flat"
+                      className="w-full justify-start p-4 h-auto"
+                      onPress={handleImportAsIs}
+                      startContent={<Icon icon="lucide:download" className="text-primary mr-2" />}
+                    >
+                      <div>
+                        <h4 className="font-medium text-left">Import as-is</h4>
+                        <p className="text-xs text-foreground-500 text-left">
+                          Import macros with their original MIDI triggers and settings
+                        </p>
+                      </div>
+                    </Button>
+                    
+                    <Button
+                      color="warning"
+                      variant="flat"
+                      className="w-full justify-start p-4 h-auto"
+                      onPress={handleImportWithRedefinition}
+                      startContent={<Icon icon="lucide:edit-3" className="text-warning mr-2" />}
+                    >
+                      <div>
+                        <h4 className="font-medium text-left">Redefine MIDI triggers</h4>
+                        <p className="text-xs text-foreground-500 text-left">
+                          Go through each macro group and assign new MIDI triggers
+                        </p>
+                      </div>
+                    </Button>
+                  </div>
+                </div>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="flat" onPress={onClose}>
+                  Cancel
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+      
+      {/* MIDI Redefinition Modal */}
+      <Modal 
+        isOpen={midiRedefinitionModal.isOpen} 
+        onOpenChange={(open) => {
+          console.log('MIDI Redefinition Modal onOpenChange:', open);
+          // Only allow closing if we're not in the middle of processing
+          if (!open && midiRedefinitionModal.currentMacro) {
+            console.log('User requested to close modal, but macro is in progress');
+            // Don't close - show a message that they need to complete or skip
+            addToast({
+              title: "Cannot Close",
+              description: "Please complete the current macro or skip it before closing",
+              color: "warning"
+            });
+            return;
+          }
+          
+          if (!open) {
+            console.log('Closing MIDI Redefinition Modal');
+            setMidiRedefinitionModal({
+              isOpen: false,
+              currentMacro: null,
+              macroIndex: 0,
+              totalMacros: 0,
+              importData: null,
+              redefinedMacros: [],
+              incrementTrigger: null,
+              decrementTrigger: null,
+              clickTrigger: null,
+              lastProcessedTimestamp: 0,
+              autoAdvanceToNextGroup: false,
+              stopListeningCounter: 0
+            });
+          }
+        }}
+        isDismissable={false}
+        hideCloseButton={true}
+      >
+        <ModalContent className="max-w-2xl">
+          {(onClose) => (
+            <>
+              <ModalHeader>
+                Redefine MIDI Triggers ({midiRedefinitionModal.macroIndex + 1} of {midiRedefinitionModal.totalMacros})
+               
+              </ModalHeader>
+              <ModalBody>
+                <div className="space-y-6">
+                  <div className="text-center">
+                    <h3 className="text-lg font-medium mb-2">
+                      {midiRedefinitionModal.currentMacro?.name || "Unknown Macro"}
+                    </h3>
+                    <p className="text-sm text-foreground-500">
+                      Assign new MIDI triggers for this macro group
+                    </p>
+                   
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Increment Trigger */}
+                    <div className={`space-y-2 p-3 rounded-lg border-2 ${
+                      midiRedefinitionModal.incrementTrigger === null && 
+                      midiRedefinitionModal.decrementTrigger === null && 
+                      midiRedefinitionModal.clickTrigger === null
+                        ? 'border-primary bg-primary-50' 
+                        : midiRedefinitionModal.incrementTrigger 
+                          ? 'border-success bg-success-50' 
+                          : 'border-default-200 bg-default-50'
+                    }`}>
+                      <h4 className="font-medium text-sm flex items-center gap-2">
+                        Increment Trigger
+                        
+                        {midiRedefinitionModal.incrementTrigger && (
+                          <span className="text-xs px-2 py-1 rounded-full bg-success text-white">
+                            ✓
+                          </span>
+                        )}
+                      </h4>
+                      <MidiTriggerSelector
+                        value={midiRedefinitionModal.incrementTrigger}
+                        onChange={(trigger) => handleMidiTriggerUpdate('increment', trigger)}
+                        forceDirection="increment"
+                        externalListening={midiRedefinitionModal.incrementTrigger === null && 
+                                         midiRedefinitionModal.decrementTrigger === null && 
+                                         midiRedefinitionModal.clickTrigger === null}
+                        onStopExternalListening={() => {
+                          setMidiRedefinitionModal(prev => ({
+                            ...prev,
+                            lastProcessedTimestamp: Date.now(),
+                            stopListeningCounter: prev.stopListeningCounter + 1
+                          }));
+                        }}
+                        lastProcessedTimestamp={midiRedefinitionModal.lastProcessedTimestamp}
+                      />
+                    </div>
+                    
+                    {/* Decrement Trigger - only show if template has decrement actions */}
+                    {midiRedefinitionModal.currentMacro?.decrementActions && (
+                      <div className={`space-y-2 p-3 rounded-lg border-2 ${
+                        midiRedefinitionModal.incrementTrigger !== null && 
+                        midiRedefinitionModal.decrementTrigger === null && 
+                        midiRedefinitionModal.clickTrigger === null
+                          ? 'border-primary bg-primary-50' 
+                          : midiRedefinitionModal.decrementTrigger 
+                            ? 'border-success bg-success-50' 
+                            : 'border-default-200 bg-default-50'
+                      }`}>
+                        <h4 className="font-medium text-sm flex items-center gap-2">
+                          Decrement Trigger
+                          
+                          {midiRedefinitionModal.decrementTrigger && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-success text-white">
+                              ✓
+                            </span>
+                          )}
+                        </h4>
+                        <MidiTriggerSelector
+                          value={midiRedefinitionModal.decrementTrigger}
+                          onChange={(trigger) => handleMidiTriggerUpdate('decrement', trigger)}
+                          forceDirection="decrement"
+                          externalListening={midiRedefinitionModal.incrementTrigger !== null && 
+                                           midiRedefinitionModal.decrementTrigger === null && 
+                                           midiRedefinitionModal.clickTrigger === null}
+                          onStopExternalListening={() => {
+                            setMidiRedefinitionModal(prev => ({
+                              ...prev,
+                              lastProcessedTimestamp: Date.now(),
+                              stopListeningCounter: prev.stopListeningCounter + 1
+                            }));
+                          }}
+                          isDisabled={midiRedefinitionModal.incrementTrigger === null}
+                          lastProcessedTimestamp={midiRedefinitionModal.lastProcessedTimestamp}
+                        />
+                      </div>
+                    )}
+                    
+                    {/* Click Trigger - only show if template has click actions */}
+                    {midiRedefinitionModal.currentMacro?.clickActions && (
+                      <div className={`space-y-2 p-3 rounded-lg border-2 ${
+                        midiRedefinitionModal.incrementTrigger !== null && 
+                        midiRedefinitionModal.decrementTrigger !== null && 
+                        midiRedefinitionModal.clickTrigger === null
+                          ? 'border-primary bg-primary-50' 
+                          : midiRedefinitionModal.clickTrigger 
+                            ? 'border-success bg-success-50' 
+                            : 'border-default-200 bg-default-50'
+                      }`}>
+                        <h4 className="font-medium text-sm flex items-center gap-2">
+                          Click Trigger
+                          
+                          {midiRedefinitionModal.clickTrigger && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-success text-white">
+                              ✓
+                          </span>
+                          )}
+                        </h4>
+                        <MidiTriggerSelector
+                          value={midiRedefinitionModal.clickTrigger}
+                          onChange={(trigger) => handleMidiTriggerUpdate('click', trigger)}
+                          externalListening={midiRedefinitionModal.incrementTrigger !== null && 
+                                           midiRedefinitionModal.decrementTrigger !== null && 
+                                           midiRedefinitionModal.clickTrigger === null}
+                          onStopExternalListening={() => {
+                            setMidiRedefinitionModal(prev => ({
+                              ...prev,
+                              lastProcessedTimestamp: Date.now(),
+                              stopListeningCounter: prev.stopListeningCounter + 1
+                            }));
+                          }}
+                          isDisabled={midiRedefinitionModal.incrementTrigger === null || midiRedefinitionModal.decrementTrigger === null}
+                          lastProcessedTimestamp={midiRedefinitionModal.lastProcessedTimestamp}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Auto-advance checkbox and manual controls */}
+                  <div className="pt-4 border-t border-default-200 space-y-3">
+                    {/* Auto-advance checkbox */}
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        isSelected={midiRedefinitionModal.autoAdvanceToNextGroup}
+                        onValueChange={(checked) => {
+                          setMidiRedefinitionModal(prev => ({
+                            ...prev,
+                            autoAdvanceToNextGroup: checked
+                          }));
+                          // Save preference to localStorage
+                          localStorage.setItem('autoAdvanceToNextGroup', String(checked));
+                        }}
+                        size="sm"
+                        color="primary"
+                      >
+                        Auto-advance to next group when all triggers are set
+                      </Checkbox>
+                    </div>
+                    
+                  
+                  </div>
+                </div>
+              </ModalBody>
+                <ModalFooter>
+                <div className="flex w-full justify-between items-center">
+                  <Button 
+                  variant="flat" 
+                  color="danger"
+                  onPress={() => {
+                    // Force close the modal
+                    setMidiRedefinitionModal({
+                    isOpen: false,
+                    currentMacro: null,
+                    macroIndex: 0,
+                    totalMacros: 0,
+                    importData: null,
+                    redefinedMacros: [],
+                    incrementTrigger: null,
+                    decrementTrigger: null,
+                    clickTrigger: null,
+                    lastProcessedTimestamp: 0,
+                    autoAdvanceToNextGroup: false,
+                    stopListeningCounter: 0
+                    });
+                  }}
+                  >
+                  Cancel Import
+                  </Button>
+                  <div className="flex gap-2">
+                  <Button 
+                    variant="flat" 
+                    onPress={handleSkipMacro}
+                    color="warning"
+                  >
+                    Skip Macro
+                  </Button>
+                  
+                  <Button 
+                    color="primary"
+                    onPress={handleNextMacro}
+                    isDisabled={!midiRedefinitionModal.incrementTrigger && !midiRedefinitionModal.decrementTrigger && !midiRedefinitionModal.clickTrigger}
+                  >
+                    {midiRedefinitionModal.macroIndex + 1 >= midiRedefinitionModal.totalMacros ? 'Finish Import' : 'Next Macro'}
+                  </Button>
+                  </div>
+                </div>
+                </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+      
+      {/* Import Summary Modal */}
+      <Modal 
+        isOpen={importSummaryModal.isOpen} 
+        onOpenChange={(open) => {
+          if (!open) {
+            setImportSummaryModal({
+              isOpen: false,
+              importData: null,
+              redefinedMacros: [],
+              duplicates: [],
+              skipDuplicates: new Set()
+            });
+          }
+        }}
+        size="3xl"
+        scrollBehavior="inside"
+      >
+        <ModalContent className="max-w-4xl">
+          {(onClose) => (
+            <>
+              <ModalHeader className="flex flex-col gap-1">
+                <h2 className="text-xl font-bold">Import Summary</h2>
+                <p className="text-sm text-foreground-500">
+                  Review the macros that will be imported with their assigned MIDI triggers
+                </p>
+              </ModalHeader>
+              <ModalBody>
+                {/* Duplicates Warning - Simple version */}
+               
+                
+                <div className="space-y-4">
+                  {importSummaryModal.redefinedMacros?.map((macro, index) => {
+                    // Check if this macro is a duplicate
+                    const originalMacro = importSummaryModal.importData?.macros?.find(
+                      (m: any) => m.groupId === macro.groupId || (!m.groupId && !macro.groupId && m.name === macro.name)
+                    );
+                    
+                    const isDuplicate = originalMacro && importSummaryModal.duplicates.some(d => 
+                      (d.importedMacro.groupId && d.importedMacro.groupId === originalMacro.groupId) ||
+                      (!d.importedMacro.groupId && d.importedMacro.name === originalMacro.name)
+                    );
+                    
+                    const identifier = originalMacro ? (originalMacro.groupId || originalMacro.name) : '';
+                    const isSkipped = isDuplicate && importSummaryModal.skipDuplicates.has(identifier);
+                    
+                    return (
+                      <Card key={index} className="p-4">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-lg font-semibold">{macro.name}</h3>
+                            <div className="flex items-center gap-2">
+                              {/* Duplicate indicator */}
+                              {isDuplicate && (
+                                <Tooltip content="Duplicate" placement="top" color="warning">
+                                  <Chip variant="flat" color="warning" size="sm">
+                                    <Icon icon="lucide:alert-triangle" className="w-3 h-3 " />
+                                  </Chip>
+                                </Tooltip>
+                              )}
+                              <Chip variant="flat" color="primary" size="sm">
+                                {macro.type ? macro.type.charAt(0).toUpperCase() + macro.type.slice(1) : 'Standard'}
+                              </Chip>
+                            </div>
+                          </div>
+                          
+                          {/* Duplicate control section */}
+                          {isDuplicate && (
+                            <div className="p-3 bg-warning-50 border border-warning-200 rounded-lg">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-sm font-medium text-warning-800">
+                                    This macro already exists in your library
+                                  </p>
+                                  <p className="text-xs text-warning-600">
+                                    {isSkipped ? 'Will be skipped during import' : 'Will be imported with a new ID'}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-warning-700">
+                                    {isSkipped ? 'Skip' : 'Import'}
+                                  </span>
+                                  <Switch
+                                    size="sm"
+                                    isSelected={!isSkipped}
+                                    onValueChange={(checked) => {
+                                      setImportSummaryModal(prev => {
+                                        const newSkipDuplicates = new Set(prev.skipDuplicates);
+                                        if (checked) {
+                                          newSkipDuplicates.delete(identifier);
+                                        } else {
+                                          newSkipDuplicates.add(identifier);
+                                        }
+                                        return {
+                                          ...prev,
+                                          skipDuplicates: newSkipDuplicates
+                                        };
+                                      });
+                                    }}
+                                    color="warning"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {/* Increment Trigger */}
+                          {macro.incrementTrigger && (
+                            <div className="p-3 bg-success-50 border border-success-200 rounded-lg">
+                              <h4 className="font-medium text-sm text-success-700 mb-1">Increment Trigger</h4>
+                              <p className="text-sm text-success-600">
+                                {getTriggerDescription(macro.incrementTrigger)}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Decrement Trigger */}
+                          {macro.decrementTrigger && (
+                            <div className="p-3 bg-warning-50 border border-warning-200 rounded-lg">
+                              <h4 className="font-medium text-sm text-warning-700 mb-1">Decrement Trigger</h4>
+                              <p className="text-sm text-warning-600">
+                                {getTriggerDescription(macro.decrementTrigger)}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Click Trigger */}
+                          {macro.clickTrigger && (
+                            <div className="p-3 bg-secondary-50 border border-secondary-200 rounded-lg">
+                              <h4 className="font-medium text-sm text-secondary-700 mb-1">Click Trigger</h4>
+                              <p className="text-sm text-secondary-600">
+                                {getTriggerDescription(macro.clickTrigger)}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                        
+                        
+                      </div>
+                    </Card>
+                  );
+                  })}
+                  
+                  {(!importSummaryModal.redefinedMacros || importSummaryModal.redefinedMacros.length === 0) && (
+                    <div className="text-center py-8 text-foreground-400">
+                      No macros to import
+                    </div>
+                  )}
+                </div>
+              </ModalBody>
+              <ModalFooter>
+                <Button 
+                  variant="flat" 
+                  onPress={onClose}
+                  color="danger"
+                >
+                  Cancel Import
+                </Button>
+                <Button 
+                  color="primary"
+                  onPress={() => {
+                    // Filter macros based on individual selections
+                    let macrosToImport = importSummaryModal.redefinedMacros;
+                    
+                    if (importSummaryModal.duplicates.length > 0) {
+                      // Filter and process duplicates based on individual selections
+                      macrosToImport = importSummaryModal.redefinedMacros.map(macro => {
+                        // Find if this macro is a duplicate
+                        const originalMacro = importSummaryModal.importData?.macros?.find(
+                          (m: any) => m.groupId === macro.groupId || (!m.groupId && !macro.groupId && m.name === macro.name)
+                        );
+                        
+                        if (!originalMacro) return macro;
+                        
+                        const isDuplicate = importSummaryModal.duplicates.some(d => 
+                          (d.importedMacro.groupId && d.importedMacro.groupId === originalMacro.groupId) ||
+                          (!d.importedMacro.groupId && d.importedMacro.name === originalMacro.name)
+                        );
+                        
+                        if (isDuplicate) {
+                          const identifier = originalMacro.groupId || originalMacro.name;
+                          const isSkipped = importSummaryModal.skipDuplicates.has(identifier);
+                          
+                          if (isSkipped) {
+                            return null; // Mark for filtering out
+                          } else {
+                            // Import with new ID
+                            const timestamp = Date.now();
+                            const random = Math.floor(Math.random() * 10000);
+                            if (originalMacro.groupId) {
+                              return { ...macro, groupId: `${originalMacro.groupId}_${timestamp}_${random}` };
+                            } else {
+                              return { ...macro, id: `${originalMacro.id || 'macro'}_${timestamp}_${random}`, name: `${originalMacro.name} (Imported)` };
+                            }
+                          }
+                        }
+                        
+                        return macro;
+                      }).filter(macro => macro !== null); // Remove skipped macros
+                    }
+                    
+                    // Proceed with the import
+                    const finalImportData = {
+                      ...importSummaryModal.importData,
+                      macros: importSummaryModal.importData.macros
+                        .filter((macro: any) => {
+                          // Only include macros that are in macrosToImport
+                          return macrosToImport.some(m => {
+                            if (m.groupId && macro.groupId) {
+                              return m.groupId === macro.groupId || m.groupId.startsWith(macro.groupId + '_');
+                            } else {
+                              return m.name === macro.name || m.name.startsWith(macro.name);
+                            }
+                          });
+                        })
+                        .map((macro: any) => {
+                          const redefined = macrosToImport.find(r => {
+                            if (r.groupId && macro.groupId) {
+                              return r.groupId === macro.groupId || r.groupId.startsWith(macro.groupId + '_');
+                            } else {
+                              return r.name === macro.name || r.name.startsWith(macro.name);
+                            }
+                          });
+                          
+                          if (redefined) {
+                            return {
+                              ...macro,
+                              id: redefined.id || macro.id,
+                              groupId: redefined.groupId || macro.groupId,
+                              name: redefined.name || macro.name,
+                              incrementTrigger: redefined.incrementTrigger,
+                              decrementTrigger: redefined.decrementTrigger,
+                              clickTrigger: redefined.clickTrigger
+                            };
+                          }
+                          return macro;
+                        })
+                    };
+                    
+                    handleImportMacros(finalImportData);
+                    onClose();
+                  }}
+                  isDisabled={!importSummaryModal.redefinedMacros?.length || (
+                    importSummaryModal.duplicates.length > 0 && 
+                    importSummaryModal.skipDuplicates.size === importSummaryModal.duplicates.length && 
+                    importSummaryModal.duplicates.length === importSummaryModal.redefinedMacros.length
+                  )}
+                >
+                  {(() => {
+                    const totalMacros = importSummaryModal.redefinedMacros?.length || 0;
+                    const duplicates = importSummaryModal.duplicates.length;
+                    const skippedDuplicates = importSummaryModal.skipDuplicates.size;
+                    const willImport = totalMacros - skippedDuplicates;
+                    
+                    if (duplicates > 0 && skippedDuplicates > 0) {
+                      return `Import ${willImport} Macro${willImport !== 1 ? 's' : ''} (${skippedDuplicates} skipped)`;
+                    } else {
+                      return `Import ${willImport} Macro${willImport !== 1 ? 's' : ''}`;
+                    }
+                  })()}
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+      
       {/* Context Menu - Now using HeroUI Dropdown */}
       <Dropdown 
         isOpen={contextMenu.isOpen} 
@@ -4671,13 +5950,13 @@ const MacroDropZone: React.FC<MacroDropZoneProps> = ({
       backgroundColor: "transparent",
       borderColor: "transparent",
       scale: 1,
-      transition: { duration: 0.2, ease: "easeOut" }
+      transition: { duration: 0.2, ease: "easeOut" as const }
     },
           active: { 
         backgroundColor: "rgba(var(--primary-rgb), 0.1)",
         borderColor: "rgba(var(--primary-rgb), 0.3)",
         scale: 1.02,
-        transition: { duration: 0.2, ease: "easeOut" }
+        transition: { duration: 0.2, ease: "easeOut" as const }
       }
   };
 
@@ -4772,19 +6051,19 @@ class MacroItem extends React.Component<MacroItemProps> {
         scale: 1, 
         opacity: 1, 
         boxShadow: "0px 1px 3px rgba(0, 0, 0, 0.1)",
-        transition: { duration: 0.2, ease: "easeOut" }
+        transition: { duration: 0.2, ease: "easeOut" as const }
       },
       dragging: { 
         scale: 1.05, 
         opacity: 0.9, 
         boxShadow: "0px 8px 25px rgba(0, 0, 0, 0.3)",
         zIndex: 1000,
-        transition: { duration: 0.2, ease: "easeOut" }
+        transition: { duration: 0.2, ease: "easeOut" as const }
       },
       hover: {
         scale: 1.02,
         boxShadow: "0px 4px 12px rgba(0, 0, 0, 0.15)",
-        transition: { duration: 0.2, ease: "easeOut" }
+        transition: { duration: 0.2, ease: "easeOut" as const }
       }
     };
     
@@ -4807,6 +6086,7 @@ class MacroItem extends React.Component<MacroItemProps> {
         >
           <Card 
             id={macro.groupId ? `macro-${macro.groupId}` : `macro-${macro.id}`}
+            data-macro-id={macro.groupId || macro.id}
             className="macro-card"
             onContextMenu={(e) => handleContextMenu(e, macro)}
           >
@@ -4835,14 +6115,14 @@ class MacroItem extends React.Component<MacroItemProps> {
                             <div className="font-medium mb-2">Before Actions ({macro.groupItems[0].beforeActions.length})</div>
                             <div className="text-xs space-y-1">
                               {macro.groupItems[0].beforeActions.map((action, idx) => (
-                                <div key={idx}> {getActionSummary(action)}</div>
+                                <div key={idx}>• {getActionSummary(action)}</div>
                               ))}
                               
                             </div>
                           </div>
                         }
                         placement="top"
-                        color="primary"
+                        color="success"
                         delay={500}
                         closeDelay={100}
                       >
@@ -4866,67 +6146,72 @@ class MacroItem extends React.Component<MacroItemProps> {
                       <div key={groupMacro.id} className="flex items-center gap-1">
                         
                         
-                        <Tooltip
-                          content={
-                            <div className="p-2">
-                              <div className="text-sm ">
-                                <div className="border-b border-white-200 pb-1">
-                                  <div className="font-medium text-white">Main Actions ({groupMacro.actions.length})</div>
-                                  <div className="border-b border-white-200 pb-1">
-
-                                  <div className="text-xs opacity-80">
-                                    {getTriggerDescription(groupMacro.trigger)}
-                                  </div>
-                                  </div>
-                                  <div className="text-xs opacity-80">
-                                    {groupMacro.actions.map((action, idx) => (
-                                      <div key={idx}> {getActionSummary(action)}</div>
-                                    ))}
-                                    
-                                  </div>
+                        {["encoder-increment", "encoder-decrement", "encoder-click"].map((type) => {
+                          if (groupMacro.type !== type) return null;
+                          const color =
+                            type === "encoder-increment"
+                              ? "primary"
+                              : type === "encoder-decrement"
+                              ? "warning"
+                              : type === "encoder-click"
+                              ? "secondary"
+                              : "primary";
+                          const label =
+                            type === "encoder-increment"
+                              ? "Increment"
+                              : type === "encoder-decrement"
+                              ? "Decrement"
+                              : type === "encoder-click"
+                              ? "Click"
+                              : "Main";
+                          const icon =
+                            type === "encoder-increment"
+                              ? "lucide:rotate-cw"
+                              : type === "encoder-decrement"
+                              ? "lucide:rotate-ccw"
+                              : type === "encoder-click"
+                              ? "lucide:mouse-pointer-click"
+                              : "lucide:circle";
+                          return (
+                            <Tooltip
+                              key={type}
+                              content={
+                                <div className="p-2">
+                                  <div className="text-sm ">
+                                      <div className="font-medium text-white">
+                                        {label} Actions ({groupMacro.actions.length})
+                                      </div>
+                                      <div className="border-b border-white-200 pb-1">
+                                        <div className="text-xs opacity-80 text-white">
+                                          {getTriggerDescription(groupMacro.trigger)}
+                                        </div>
+                                      </div>
+                                      <div className="text-xs opacity-80 text-white">
+                                        {groupMacro.actions.map((action, idx) => (
+                                          <div key={idx}>• {getActionSummary(action)}</div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                   
+                                  
                                 </div>
-                                
-                                {groupMacro.timeout && (
-                                  <div className="text-xs opacity-60">
-                                    <strong>Timeout:</strong> {groupMacro.timeout}ms
-                                  </div>
-                                )}
-                                
-                                {/* MIDI Trigger Description */}
-                                 
-                                
-                                
-                              </div>
-                            </div>
-                          }
-                          placement="top"
-                          color="primary"
-                          delay={500}
-                          closeDelay={100}
-                        >
-                          <Chip 
-                            size="sm" 
-                            variant="flat" 
-                            color={getChipColor(groupMacro.type)}
-                            className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
-                          >
-                            {groupMacro.type === "encoder-increment" ? (
-                              <Icon icon="lucide:rotate-cw" className="w-3 h-3" />
-                            ) : groupMacro.type === "encoder-decrement" ? (
-                              <Icon icon="lucide:rotate-ccw" className="w-3 h-3" />
-                            ) : groupMacro.type === "encoder-click" ? (
-                              <Icon icon="lucide:mouse-pointer-click" className="w-3 h-3" />
-                            ) : (
-                              <Icon icon="lucide:circle" className="w-3 h-3" />
-                            )}
-                            <span className="text-xs">
-                              {groupMacro.type === "encoder-increment" ? "" : 
-                               groupMacro.type === "encoder-decrement" ? "" : 
-                               groupMacro.type === "encoder-click" ? "" : 
-                               "Standard"}
-                            </span>
-                          </Chip>
-                        </Tooltip>
+                              }
+                              placement="top"
+                              color={color}
+                              delay={500}
+                              closeDelay={100}
+                            >
+                              <Chip
+                                size="sm"
+                                variant="flat"
+                                color={color}
+                                className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
+                              >
+                                <Icon icon={icon} className="w-3 h-3" />
+                              </Chip>
+                            </Tooltip>
+                          );
+                        })}
                         {index < (macro.groupItems?.length || 0) - 1 && (
                           <span className="text-foreground-300 mx-1">•</span>
                         )}
@@ -4953,7 +6238,7 @@ class MacroItem extends React.Component<MacroItemProps> {
                           </div>
                         }
                         placement="top"
-                        color="primary"
+                        color="success"
                         delay={500}
                         closeDelay={100}
                       >
@@ -5149,7 +6434,6 @@ class MacroItem extends React.Component<MacroItemProps> {
                       content={
                         <div className="p-2">
                           <div className="text-sm">
-                            <div className="border-b border-white-200 pb-1">
                               <div className="font-medium text-white">Main Actions ({macro.actions.length})</div>
                               <div className="border-b border-white-200 pb-1">
                                 <div className="text-xs opacity-80">
@@ -5169,18 +6453,17 @@ class MacroItem extends React.Component<MacroItemProps> {
                                 <strong>Timeout:</strong> {macro.timeout}ms
                               </div>
                             )}
-                          </div>
                         </div>
                       }
                       placement="top"
-                      color="primary"
+                      color="danger"
                       delay={500}
                       closeDelay={100}
                     >
                       <Chip 
                         size="sm" 
                         variant="flat" 
-                        color="primary"
+                        color="danger"
                         className="text-xs h-5 px-2 flex items-center gap-1 cursor-help"
                       >
                         <Icon icon="lucide:mouse-pointer-click" className="w-3 h-3" />

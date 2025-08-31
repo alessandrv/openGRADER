@@ -18,6 +18,9 @@ interface MidiContextType {
     controller?: number;
     value?: number;
     timestamp: number;
+  // Optional macro association for quick navigation from the monitor
+  macroId?: string;
+  macroName?: string;
   } | null;
   midiEventLog: {
     type: string;
@@ -26,6 +29,8 @@ interface MidiContextType {
     controller?: number;
     value?: number;
     timestamp: number;
+  macroId?: string;
+  macroName?: string;
   }[];
   showDeviceModal: boolean;
   setShowDeviceModal: (show: boolean) => void;
@@ -215,6 +220,8 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
     controller?: number;
     value?: number;
     timestamp: number;
+  macroId?: string;
+  macroName?: string;
   } | null>(null);
   const [midiEventLog, setMidiEventLog] = useState<{
     type: string;
@@ -223,6 +230,8 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
     controller?: number;
     value?: number;
     timestamp: number;
+  macroId?: string;
+  macroName?: string;
   }[]>([]);
   
   const rustMidiEventUnlistenerRef = useRef<UnlistenFn | null>(null);
@@ -299,7 +308,7 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
         listen<RustMidiEvent>('rust-midi-event', (event) => {
           const payload = event.payload;
            // console.log("[MidiProvider] Received rust-midi-event:", payload); // Can be noisy
-          const message = {
+          const base = {
             type: payload.type_name,
             channel: payload.channel,
             note: payload.note,
@@ -307,8 +316,44 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
             value: payload.value || payload.velocity, // Use velocity if value is not present (e.g. for noteon)
             timestamp: Date.now()
           };
+          // Try to associate this event with a macro, preferring active ones
+          const attachMacroAssociation = () => {
+            try {
+              const macros = JSON.parse(localStorage.getItem('midiMacros') || '[]') as Array<any>;
+              const activeIds = new Set<string>(JSON.parse(localStorage.getItem('activeMidiMacros') || '[]'));
+              const candidates = macros.filter((m) => {
+                if (!m || !m.trigger) return false;
+                // Match on type and channel first
+                if (m.trigger.type !== base.type) return false;
+                if (m.trigger.channel !== base.channel) return false;
+                if (base.type === 'noteon' || base.type === 'noteoff') {
+                  return m.trigger.note === base.note;
+                }
+                if (base.type === 'controlchange') {
+                  if (m.trigger.controller !== base.controller) return false;
+                  // If macro specifies a value, require exact match
+                  if (typeof m.trigger.value === 'number') {
+                    return typeof base.value === 'number' && m.trigger.value === base.value;
+                  }
+                  return true;
+                }
+                return false;
+              });
+              if (candidates.length === 0) return base;
+              // Prefer active macros
+              const preferred = candidates.find(c => activeIds.has(c.id)) || candidates[0];
+              const isGroup = !!preferred.groupId;
+              const stripSuffix = (name: string) => name.replace(/ \((Increment|Decrement|Click)\)$/i, "");
+              const macroId = isGroup ? (preferred.groupId as string) : (preferred.id as string);
+              const macroName = isGroup ? stripSuffix(preferred.name as string) : (preferred.name as string);
+              return { ...base, macroId, macroName };
+            } catch {
+              return base;
+            }
+          };
+          const message = attachMacroAssociation();
           setLastReceivedMessage(message);
-          setMidiEventLog(prev => [message, ...prev].slice(0, 25));
+          setMidiEventLog(prev => [message, ...prev].slice(0, 50));
         }).then(unlistenerFn => {
           if (isMounted) {
             rustMidiEventUnlistenerRef.current = unlistenerFn;
@@ -489,7 +534,6 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   // Listen for Tauri backend MIDI status (e.g., connection success/failure from Rust)
   useEffect(() => {
-    let isStatusListenerMounted = true;
     console.log("[MidiProvider] Setting up 'midi-status' listener.");
     const unlistenFn = listenToMidiStatus((status: string) => {
       console.log("[MidiProvider] Received 'midi-status':", status);
@@ -497,7 +541,6 @@ export const MidiProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     
     return () => {
-      isStatusListenerMounted = false; // This flag can be used if there were async ops before unlisten
       console.log("[MidiProvider] Cleaning up 'midi-status' listener.");
       if (typeof unlistenFn === 'function') {
         unlistenFn();

@@ -15,6 +15,9 @@ interface MidiTriggerSelectorProps {
   matchController?: number;
   externalListening?: boolean; // Add external listening state
   onStopExternalListening?: () => void; // Add callback to stop external listening
+  isDisabled?: boolean; // Add disabled state
+  autoListen?: boolean; // Add auto-listen state
+  lastProcessedTimestamp?: number; // Add timestamp to prevent stale message processing
 }
 
 export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({ 
@@ -24,23 +27,60 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
   matchChannel,
   matchController,
   externalListening = false, // Add external listening prop with default
-  onStopExternalListening // Add new prop
+  onStopExternalListening, // Add new prop
+  isDisabled = false, // Add disabled prop with default
+  autoListen = false, // Add auto-listen prop with default
+  lastProcessedTimestamp = 0 // Add timestamp prop with default
 }) => {
   const [isListening, setIsListening] = useState(false);
   const { lastReceivedMessage, isEnabled } = useMidi();
   const [listeningStartTime, setListeningStartTime] = useState<number | null>(null);
+  const [autoListenStartTime, setAutoListenStartTime] = useState<number | null>(null);
   
   // Determine if we should show listening state (either internal or external)
-  const showListening = isListening || externalListening;
+  const showListening = (isListening || externalListening || autoListen) && !isDisabled;
+  
+  // Auto-start listening when autoListen is true
+  useEffect(() => {
+    if (autoListen && !isDisabled && !value) {
+      // Add a small delay before starting to listen to avoid processing stale messages
+      const timeoutId = setTimeout(() => {
+        setIsListening(true);
+        setListeningStartTime(Date.now());
+        setAutoListenStartTime(Date.now());
+      }, 100); // 100ms delay to ensure any stale messages are ignored
+      
+      return () => clearTimeout(timeoutId);
+    } else {
+      setAutoListenStartTime(null);
+    }
+  }, [autoListen, isDisabled, value]);
     
   // When in listening mode, watch for MIDI input
   useEffect(() => {
-    if (!showListening || !lastReceivedMessage || !listeningStartTime) return;
+    if (!showListening || !lastReceivedMessage || isDisabled) return;
     
-    // Only process messages that arrived AFTER listening started
-    if (lastReceivedMessage.timestamp > listeningStartTime) {
+    // For auto-listen mode, only process messages that arrive after autoListenStartTime
+    if (autoListen && autoListenStartTime) {
+      if (lastReceivedMessage.timestamp <= autoListenStartTime) {
+        console.log(`Ignoring stale MIDI message for auto-listen (timestamp: ${lastReceivedMessage.timestamp}, autoStartTime: ${autoListenStartTime})`);
+        return;
+      }
+    }
+    
+    // Prevent processing stale messages - only process messages that are newer than lastProcessedTimestamp
+    if (lastReceivedMessage.timestamp <= lastProcessedTimestamp) {
+      console.log(`Ignoring already processed MIDI message (timestamp: ${lastReceivedMessage.timestamp}, lastProcessed: ${lastProcessedTimestamp})`);
+      return;
+    }
+    
+    // For external listening, we don't need to check listeningStartTime
+    // For internal listening, we check if the message arrived after we started listening
+    if (externalListening || (listeningStartTime && lastReceivedMessage.timestamp > listeningStartTime)) {
       // Process any relevant MIDI message type
       if (lastReceivedMessage.type === "noteon" || lastReceivedMessage.type === "noteoff" || lastReceivedMessage.type === "controlchange") {
+        console.log(`Processing MIDI message (timestamp: ${lastReceivedMessage.timestamp}, type: ${lastReceivedMessage.type})`);
+        
         // Construct as compatible with MidiTriggerValue
         const newTriggerValue: Partial<MidiTriggerValue> = {
           type: lastReceivedMessage.type as MidiTriggerValue['type'], // Cast the type
@@ -63,11 +103,19 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
         }
         
         onChange(newTriggerValue as MidiTriggerValue); // Cast to full type before calling onChange
+        
+        // Reset internal listening state
         setIsListening(false);
-        setListeningStartTime(null); // Reset start time
+        setListeningStartTime(null);
+        setAutoListenStartTime(null);
+        
+        // If this was external listening, call the stop callback
+        if (externalListening && onStopExternalListening) {
+          onStopExternalListening();
+        }
       }
     }
-  }, [lastReceivedMessage, showListening, onChange, forceDirection, listeningStartTime]);
+  }, [lastReceivedMessage, showListening, onChange, forceDirection, listeningStartTime, externalListening, onStopExternalListening, lastProcessedTimestamp, autoListen, autoListenStartTime]);
             
   // Removed auto-filling effect to prevent unwanted cross-detection between increment and decrement
   // useEffect(() => {
@@ -104,16 +152,12 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
       description = value.type === "noteon" ? "Note On" : "Note Off";
       if (value.note !== undefined) details.push(`Note ${value.note}`);
       if (value.value !== undefined) details.push(`Vel ${value.value}`);
-      if (value.direction) {
-        details.push(value.direction === "increment" ? "Inc (↑)" : "Dec (↓)");
-      }
+      
     } else if (value.type === "controlchange") {
       description = "Control Change";
       if (value.controller !== undefined) details.push(`CC ${value.controller}`);
       if (value.value !== undefined) details.push(`Val ${value.value}`);
-      if (value.direction) {
-        details.push(value.direction === "increment" ? "Inc (↑)" : "Dec (↓)");
-      }
+      
     } else {
       description = value.type; // Fallback for other types if any
     }
@@ -160,7 +204,7 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
   const isPreFilledEncoder = false;
 
   return (
-    <Card className="">
+    <Card className={`${isDisabled ? "opacity-50" : ""} `}>
       {!value || showListening ? ( // Show listening UI if no value OR explicitly listening
         <>
           {showListening ? (
@@ -186,21 +230,27 @@ export const MidiTriggerSelector: React.FC<MidiTriggerSelectorProps> = ({
                 }}
                 className="animate-pulse"
               >
-                {externalListening ? "Stop Auto-Detection" : "Stop Listening"}
+                Listening
               </Button>
         </div>
           ) : (
             // Only show the detect button if not externally listening
             !externalListening && (
-              <Button
-                color="primary"
-                fullWidth
-                startContent={<Icon icon="lucide:radio" />}
-                onPress={handleStartListening}
-                isDisabled={!isEnabled || isPreFilledEncoder}
-              >
-                Detect MIDI Input
-              </Button>
+              isDisabled ? (
+                <div className="text-center p-4 text-sm text-foreground-400">
+                  Complete previous triggers first
+                </div>
+              ) : (
+                <Button
+                  color="primary"
+                  fullWidth
+                  startContent={<Icon icon="lucide:radio" />}
+                  onPress={handleStartListening}
+                  isDisabled={!isEnabled || isPreFilledEncoder}
+                >
+                  Detect MIDI Input
+                </Button>
+              )
             )
           )}
            {value && !showListening && !isPreFilledEncoder && ( // Show current value if set and not listening, and not a pre-filled encoder

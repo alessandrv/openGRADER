@@ -25,7 +25,7 @@ interface ContextMenuItem {
   onPress: () => void;
 }
 
-export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({ 
+export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
   onCreateNewMacro,
   onApplyTemplate,
   onEditMacroFromTemplate,
@@ -41,17 +41,17 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const { isOpen: isErrorOpen, onOpen: onErrorOpen, onOpenChange: onErrorOpenChange } = useDisclosure();
-  
+
   // Export selection state
   const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(new Set());
   const [showExportSelection, setShowExportSelection] = useState(false);
-  
+
   // State for delete confirmation popover
   const [deletePopoverOpen, setDeletePopoverOpen] = useState<string | null>(null);
-  
+
   // Reference to track elements being deleted with animation
   const elementsBeingDeleted = useRef(new Set<string>());
-  
+
   // Context menu state - now using HeroUI dropdown
   const [contextMenu, setContextMenu] = useState<{
     isOpen: boolean;
@@ -66,12 +66,12 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
     template: undefined,
     isPageLevel: false
   });
-  
+
   // Context menu handlers
   const handleContextMenu = useCallback((e: React.MouseEvent, template?: MacroTemplate) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     setContextMenu({
       isOpen: true,
       x: e.clientX,
@@ -80,11 +80,11 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       isPageLevel: !template
     });
   }, []);
-  
+
   const closeContextMenu = useCallback(() => {
     setContextMenu(prev => ({ ...prev, isOpen: false }));
   }, []);
-  
+
   // Close context menu when clicking outside
   useEffect(() => {
     const handleClickOutside = () => {
@@ -92,16 +92,16 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         closeContextMenu();
       }
     };
-    
+
     document.addEventListener('click', handleClickOutside);
     document.addEventListener('contextmenu', handleClickOutside);
-    
+
     return () => {
       document.removeEventListener('click', handleClickOutside);
       document.removeEventListener('contextmenu', handleClickOutside);
     };
   }, [contextMenu.isOpen, closeContextMenu]);
-  
+
   // Thanos snap animation functions
   const setRandomSeed = useCallback(() => {
     const turbulence = document.getElementById("dissolve-filter-turbulence");
@@ -119,12 +119,12 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
   const useThanosSnap = useCallback((elementId: string, onComplete: () => void) => {
     const element = document.getElementById(elementId);
     if (!element || elementsBeingDeleted.current.has(elementId)) return;
-    
+
     elementsBeingDeleted.current.add(elementId);
-    
+
     const displacement = document.getElementById("dissolve-filter-displacement");
     if (!displacement) return;
-    
+
     setRandomSeed();
     element.style.filter = "url(#dissolve-filter)";
 
@@ -152,29 +152,29 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
 
     requestAnimationFrame(animate);
   }, [easeOutCubic, setRandomSeed]);
-  
+
   // Handle file input change for import
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        
+
         // Try to import the templates
         const count = importTemplates(data);
-        
+
         // Explicitly reload templates to trigger a re-render
         loadTemplatesFromStorage();
-        
+
         addToast({
           title: "Templates Imported",
           description: `${count} template${count !== 1 ? 's' : ''} imported successfully`,
           color: "success"
         });
-        
+
         // Reset the file input
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
@@ -183,34 +183,34 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         console.error("Error parsing import file:", error);
         setImportError(error instanceof Error ? error.message : "Invalid template file format");
         onErrorOpen();
-        
+
         // Reset the file input
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
       }
     };
-    
+
     reader.onerror = () => {
       setImportError("Error reading file");
       onErrorOpen();
-      
+
       // Reset the file input
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     };
-    
+
     reader.readAsText(file);
   };
-  
+
   // Handle template import click
   const handleImportClick = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
   };
-  
+
   // Handle export selected templates
   const handleExportSelected = () => {
     try {
@@ -222,13 +222,13 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         });
         return;
       }
-      
+
       const count = exportTemplates([...selectedTemplates]);
-      
+
       // After export, reset the selection mode
       setShowExportSelection(false);
       setSelectedTemplates(new Set());
-      
+
       addToast({
         title: "Templates Exported",
         description: `${count} template${count !== 1 ? 's' : ''} exported successfully`,
@@ -243,7 +243,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       });
     }
   };
-  
+
   // Handle export all templates
   const handleExportAll = () => {
     try {
@@ -255,9 +255,9 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         });
         return;
       }
-      
+
       const count = exportTemplates();
-      
+
       addToast({
         title: "All Templates Exported",
         description: `${count} template${count !== 1 ? 's' : ''} exported successfully`,
@@ -272,7 +272,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       });
     }
   };
-  
+
   // Handle select all templates
   const handleSelectAll = () => {
     if (selectedTemplates.size === templates.length) {
@@ -284,7 +284,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       setSelectedTemplates(new Set(allIds));
     }
   };
-  
+
   // Load categories on mount
   useEffect(() => {
     // Load categories
@@ -298,23 +298,23 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       }
     }
   }, []);
-  
+
   // Reset selected templates when templates change
   useEffect(() => {
     setSelectedTemplates(new Set());
   }, [templates]);
-  
+
   const handleSelectTemplate = (template: MacroTemplate) => {
     // Don't open the template modal if we're in export selection mode
     if (showExportSelection) {
       toggleTemplateSelection(template.id);
       return;
     }
-    
+
     setSelectedTemplate(template);
     onOpen();
   };
-  
+
   const toggleTemplateSelection = (id: string) => {
     setSelectedTemplates(prev => {
       const newSelection = new Set(prev);
@@ -326,12 +326,12 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       return newSelection;
     });
   };
-  
+
   const handleCancelTemplate = () => {
     setSelectedTemplate(null);
     onClose();
   };
-  
+
   const handleBulkInitialize = (template: MacroTemplate) => {
     // Only allow bulk initialization for encoder templates
     if (template.type.includes("encoder")) {
@@ -350,7 +350,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
     // Save the macros to localStorage
     const existingMacros = localStorage.getItem("midiMacros");
     let allMacros: MacroDefinition[] = [];
-    
+
     if (existingMacros) {
       try {
         allMacros = JSON.parse(existingMacros);
@@ -359,29 +359,29 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         allMacros = [];
       }
     }
-    
+
     // Add the new macros
     allMacros.push(...macros);
-    
+
     // Save back to localStorage
     localStorage.setItem("midiMacros", JSON.stringify(allMacros));
-    
+
     // Show success message
     addToast({
       title: "Macros Created",
       description: `Successfully created ${macros.length} macros from template`,
       color: "success"
     });
-    
+
     // Close the bulk init modal
     onBulkClose();
     setBulkInitTemplate(null);
-    
+
     // Navigate to macros view to show the created macros
-    onApplyTemplate({ 
-      id: "navigate-to-macros", 
-      name: "dummy", 
-      trigger: { type: "noteon" }, 
+    onApplyTemplate({
+      id: "navigate-to-macros",
+      name: "dummy",
+      trigger: { type: "noteon" },
       actions: [],
       createdAt: ""
     });
@@ -391,7 +391,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
     setBulkInitTemplate(null);
     onBulkClose();
   };
-  
+
   const getCategoryColor = (categoryId?: string): string => {
     if (!categoryId) return "default";
     const category = categories.find(c => c.id === categoryId);
@@ -424,6 +424,12 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
 
   // Helper function to get background style for template cards
   const getTemplateBackgroundStyle = (color: string) => {
+    if (color === "default") {
+      return {
+        className: 'bg-black-50',
+        style: {}
+      };
+    }
     if (isPresetColor(color)) {
       return {
         className: `bg-${color}-50`,
@@ -476,42 +482,89 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
     }
   };
 
-  // Helper function to get chip color
-  const getChipColor = (color: string): "default" | "primary" | "secondary" | "success" | "warning" | "danger" => {
-    if (isPresetColor(color)) {
-      // Map preset colors to valid chip colors
-      switch (color) {
-        case "red":
-        case "rose":
-        case "pink":
-        case "crimson":
-          return "danger";
-        case "orange":
-        case "amber":
-        case "yellow":
-          return "warning";
-        case "green":
-        case "emerald":
-        case "lime":
-        case "teal":
-          return "success";
-        case "blue":
-        case "sky":
-        case "cyan":
-        case "indigo":
-        case "violet":
-        case "purple":
-        case "fuchsia":
-          return "primary";
-        default:
-          return "default";
-      }
+  // Helper to compute Chip appearance that follows category color strictly
+  // Map known Tailwind-like hue names and common CSS color names to hex
+  const hueHex: Record<string, string> = {
+    red: "#ef4444",
+    rose: "#f43f5e",
+    pink: "#ec4899",
+    fuchsia: "#d946ef",
+    purple: "#a855f7",
+    violet: "#8b5cf6",
+    indigo: "#6366f1",
+    blue: "#3b82f6",
+    sky: "#0ea5e9",
+    cyan: "#22d3ee",
+    teal: "#14b8a6",
+    emerald: "#10b981",
+    green: "#22c55e",
+    lime: "#84cc16",
+    yellow: "#eab308",
+    amber: "#f59e0b",
+    orange: "#f97316",
+    coral: "#FF7F50",
+    salmon: "#FA8072",
+    crimson: "#DC143C"
+  };
+
+  const normalizeColor = (c?: string) => (c || "").trim().toLowerCase();
+
+  const toHex = (c: string): string | null => {
+    const col = normalizeColor(c);
+    if (/^#([a-f\d]{6})$/i.test(col)) return col;
+    if (hueHex[col]) return hueHex[col];
+    // Minimal named CSS color support
+    const cssNamed: Record<string, string> = {
+      teal: "#008080",
+      navy: "#000080",
+      olive: "#808000",
+      maroon: "#800000",
+      coral: "#FF7F50",
+      salmon: "#FA8072",
+      crimson: "#DC143C"
+    };
+    if (cssNamed[col]) return cssNamed[col];
+    return null;
+  };
+
+  const getChipAppearance = (color: string): {
+    color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
+    className?: string;
+    style?: React.CSSProperties;
+  } => {
+    const c = normalizeColor(color);
+    if (!c || c === "default") {
+      return { color: "default" };
+    }
+
+    // Keep theme semantic colors as-is
+    if (["primary", "secondary", "success", "warning", "danger"].includes(c)) {
+      return { color: c as any };
+    }
+
+    // Resolve to hex if possible and tint; otherwise fall back to raw CSS color
+    const hex = toHex(c);
+    if (hex) {
+      return {
+        color: "default",
+        style: {
+          backgroundColor: hexToRgba(hex, 0.15),
+          color: hex,
+          borderColor: hexToRgba(hex, 0.3)
+        }
+      };
     } else {
-      // For custom colors, use default chip and custom styling
-      return "default";
+      return {
+        color: "default",
+        style: {
+          backgroundColor: c,
+          color: c,
+          opacity: 0.95
+        }
+      };
     }
   };
-  
+
   const getTemplateTypeIcon = (type: string): string => {
     switch (type) {
       case "encoder-increment":
@@ -523,7 +576,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         return "lucide:music";
     }
   };
-  
+
   const getTemplateTypeLabel = (type: string): string => {
     switch (type) {
       case "encoder-increment":
@@ -535,22 +588,22 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         return "Standard";
     }
   };
-  
+
   const handleConfirmDelete = (id: string) => {
     const template = templates.find((t: MacroTemplate) => t.id === id);
     if (!template) return;
-    
+
     // Get the element ID for animation
     const elementId = `template-${id}`;
-    
+
     // Apply the Thanos snap animation
     useThanosSnap(elementId, () => {
       // Delete from templates
       deleteTemplate(id);
-      
+
       // Notify parent
       onDeleteTemplate(id);
-      
+
       // Show success message
       addToast({
         title: "Template Deleted",
@@ -559,7 +612,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       });
     });
   };
-  
+
   const handleEditTemplateClick = (template: MacroTemplate) => {
     if (onEditTemplate) {
       console.log("Editing template:", template);
@@ -573,7 +626,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       });
     }
   };
-  
+
   // Method to handle action buttons in the template card
   const handleTemplateAction = (e: React.MouseEvent | null, action: 'edit' | 'delete', template: MacroTemplate) => {
     // Stop event propagation to prevent toggling selection when clicking action buttons
@@ -581,7 +634,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
     if (e && typeof e.stopPropagation === 'function') {
       e.stopPropagation();
     }
-    
+
     if (action === 'edit') {
       handleEditTemplateClick(template);
     }
@@ -652,10 +705,10 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
           icon: 'lucide:list',
           color: 'primary' as const,
           onPress: () => {
-            onApplyTemplate({ 
-              id: "navigate-to-macros", 
-              name: "dummy", 
-              trigger: { type: "noteon" }, 
+            onApplyTemplate({
+              id: "navigate-to-macros",
+              name: "dummy",
+              trigger: { type: "noteon" },
               actions: [],
               createdAt: ""
             });
@@ -715,12 +768,12 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       <svg xmlns="http://www.w3.org/2000/svg" style={{ display: 'none' }}>
         <defs>
           <filter id="dissolve-filter" x="-200%" y="-200%" width="500%" height="500%" color-interpolation-filters="sRGB" overflow="visible">
-            <feTurbulence 
+            <feTurbulence
               id="dissolve-filter-turbulence"
-              type="fractalNoise" 
-              baseFrequency="0.004" 
-              numOctaves="1" 
-              result="bigNoise" 
+              type="fractalNoise"
+              baseFrequency="0.004"
+              numOctaves="1"
+              result="bigNoise"
               seed="0"
             />
             <feComponentTransfer in="bigNoise" result="bigNoiseAdjusted">
@@ -732,13 +785,13 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
               <feMergeNode in="bigNoiseAdjusted" />
               <feMergeNode in="fineNoise" />
             </feMerge>
-            <feDisplacementMap 
+            <feDisplacementMap
               id="dissolve-filter-displacement"
-              in="SourceGraphic" 
-              in2="mergedNoise" 
-              scale="0" 
-              xChannelSelector="R" 
-              yChannelSelector="G" 
+              in="SourceGraphic"
+              in2="mergedNoise"
+              scale="0"
+              xChannelSelector="R"
+              yChannelSelector="G"
             />
           </filter>
         </defs>
@@ -751,9 +804,9 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
             <h2 className="text-2xl font-semibold text-foreground">Templates Gallery</h2>
             <p className="text-foreground-500 text-sm mt-1">Create, use and manage your macro templates</p>
           </div>
-          
-        
-          
+
+
+
           <div className="flex gap-2 items-center">
             {showExportSelection && (
               <>
@@ -789,31 +842,31 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                 </Button>
               </>
             )}
-            
+
             {!showExportSelection && (
               <>
-                <Button 
+                <Button
                   className="rounded-full font-medium"
                   color="primary"
                   variant="solid"
                   startContent={<Icon icon="lucide:list" />}
-                  onPress={() => onApplyTemplate({ 
-                    id: "navigate-to-macros", 
-                    name: "dummy", 
-                    trigger: { type: "noteon" }, 
+                  onPress={() => onApplyTemplate({
+                    id: "navigate-to-macros",
+                    name: "dummy",
+                    trigger: { type: "noteon" },
                     actions: [],
                     createdAt: ""
                   })}
                 >
                   My Macros
                 </Button>
-                
+
                 <Dropdown>
                   <DropdownTrigger>
-                    <Button 
+                    <Button
                       isIconOnly
-                      className="rounded-full" 
-                      variant="flat" 
+                      className="rounded-full"
+                      variant="flat"
                       color="default"
                     >
                       <Icon icon="lucide:settings" className="text-lg" />
@@ -856,7 +909,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
                     </DropdownItem>
                   </DropdownMenu>
                 </Dropdown>
-                
+
                 <input
                   type="file"
                   ref={fileInputRef}
@@ -869,265 +922,262 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
           </div>
         </div>
       </div>
-      
-      <div className="grid grid-cols-3 xs:grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5  gap-4">
+
+      <div className="grid grid-cols-3 xs:grid-cols-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5  gap-4 -z-10">
         {/* Create New Macro Card - iOS style glossy card */}
         {!showExportSelection && (
-              <div className="relative" style={{ borderRadius: 16 }}>
-                <ElectricBorder
-                  color={"white"}
-                  speed={1}
-                  chaos={0.5}
-                  thickness={2}
-                  style={{
-                    borderRadius: 16,
-                    zIndex: 10,
-                    pointerEvents: "none",
-                    position: "absolute",
-                    inset: 0,
-                  }}
-                />
-                <Card 
-                  isPressable
-                  className="relative overflow-hidden h-[200px] shadow-md backdrop-blur-sm hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02] hover:border-primary/20 group"
-                  onPress={onCreateNewMacro}
-                  style={{ borderRadius: 16 }}
-                >
-                  <div className="relative flex flex-col items-center justify-center text-center p-5 h-full">
-                    <div className="mb-5 p-4 rounded-full bg-white/10 border border-white/20 transition-colors duration-300 group-hover:bg-white/20">
-                      <Icon icon="lucide:plus" className="text-white text-2xl" />
-                    </div>
-                    <h3 className="text-xl font-medium text-foreground mb-2">Create New Macro</h3>
-                    <p className="text-sm text-foreground-500 mt-1 max-w-[16rem]">
-                      Start from scratch with a blank macro
-                    </p>
-                  </div>
-                </Card>
+          <div className="relative" style={{ borderRadius: 16 }}>
+            <ElectricBorder
+              color={"white"}
+              speed={1}
+              chaos={0.5}
+              thickness={2}
+              style={{
+                borderRadius: 16,
+                zIndex: 10,
+                pointerEvents: "none",
+                position: "absolute",
+                inset: 0,
+              }}
+            />
+            <Card
+              isPressable
+              className="relative overflow-hidden h-[200px] shadow-md backdrop-blur-sm hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02] hover:border-primary/20 group"
+              onPress={onCreateNewMacro}
+              style={{ borderRadius: 16 }}
+            >
+              <div className="relative flex flex-col items-center justify-center text-center p-5 h-full">
+                <div className="mb-5 p-4 rounded-full bg-white/10 border border-white/20 transition-colors duration-300 group-hover:bg-white/20">
+                  <Icon icon="lucide:plus" className="text-white text-2xl" />
+                </div>
+                <h3 className="text-xl font-medium text-foreground mb-2">Create New Macro</h3>
+                <p className="text-sm text-foreground-500 mt-1 max-w-[16rem]">
+                  Start from scratch with a blank macro
+                </p>
               </div>
-            )}
-        {/* Template Cards - Clean design */}
+            </Card>
+          </div>
+        )}
+        {/* Template Cards */}
         {templates.map((template: MacroTemplate) => {
           const categoryColor = getCategoryColor(template.categoryId);
           const isSelected = selectedTemplates.has(template.id);
           const backgroundStyle = getTemplateBackgroundStyle(categoryColor);
           const iconBackgroundStyle = getIconBackgroundStyle(categoryColor);
           const iconColorStyle = getIconColorStyle(categoryColor);
-          const chipColor = getChipColor(categoryColor);
-          
+          const chip = getChipAppearance(categoryColor);
+
           return (
             <ElectricBorder
-  color={categoryColor}
-  speed={1}
-  chaos={0.5}
-  thickness={2}
-  style={{ borderRadius: 16 }}
+              color={categoryColor}
+              speed={1}
+              chaos={0.5}
+              thickness={2}
+              style={{ borderRadius: 16 }}
+            >
 
->
-
-            <Card 
-              key={template.id}
-              id={`template-${template.id}`}
-              isPressable
-              className={`
+              <Card
+                key={template.id}
+                id={`template-${template.id}`}
+                isPressable
+                className={`
+                
                 h-[200px] w-full transition-all duration-200 
-                ${showExportSelection 
-                  ? isSelected 
-                    ? 'shadow-lg ring-2 ring-primary border-primary' 
-                    : 'opacity-80 hover:opacity-100' 
-                  : 'hover:shadow-lg hover:border-primary/30 hover:scale-[1.01] transform'
-                } 
+                ${showExportSelection
+                    ? isSelected
+                      ? 'shadow-lg ring-2 ring-primary border-primary'
+                      : 'opacity-80 hover:opacity-100'
+                    : 'hover:shadow-lg hover:border-primary/30 hover:scale-[1.01] transform'
+                  } 
                 ${backgroundStyle.className} flex flex-col p-4 group
               `}
-              style={backgroundStyle.style}
-              onPress={() => {
-                if (showExportSelection) {
-                  toggleTemplateSelection(template.id);
-                } else {
-                  handleSelectTemplate(template);
-                }
-              }}
-              onContextMenu={(e) => handleContextMenu(e, template)}
-            >
-              <div className="flex justify-between items-center mb-3">
-                <div className="flex items-center gap-2">
-                  <div 
-                    className={`p-2 rounded-md ${iconBackgroundStyle.className}`}
-                    style={iconBackgroundStyle.style}
-                  >
-                    <Icon 
-                      icon={getTemplateTypeIcon(template.type)} 
-                      className={`text-xl ${iconColorStyle.className}`}
-                      style={iconColorStyle.style}
-                    />
-                  </div>
-                  
-                  <Chip 
-                    size="sm" 
-                    variant="flat"
-                    color={chipColor}
-                    style={!isPresetColor(categoryColor) ? { 
-                      backgroundColor: hexToRgba(categoryColor, 0.15),
-                      color: categoryColor,
-                      borderColor: hexToRgba(categoryColor, 0.3)
-                    } : {}}
-                  >
-                    {getTemplateTypeLabel(template.type)}
-                  </Chip>
-                </div>
-                
-                <div className="flex gap-1">
-                  {!showExportSelection && (
-                    <>
-                      <div className="relative">
-                        <Dropdown>
-                          <DropdownTrigger>
-                            <Button
-                              isIconOnly
-                              size="sm"
-                              variant="light"
-                              color="default"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Icon icon="lucide:more-vertical" className="text-foreground-500" />
-                            </Button>
-                          </DropdownTrigger>
-                          <DropdownMenu aria-label="Template actions" variant="flat">
-                            <DropdownItem
-                              key="use"
-                              description="Apply this template to create a macro"
-                              startContent={<Icon icon="lucide:play" className="text-primary" />}
-                              onPress={() => handleSelectTemplate(template)}
-                            >
-                              Use Template
-                            </DropdownItem>
-                            
-                            {template.type.includes("encoder") ? (
-                              <DropdownItem
-                                key="bulk-init"
-                                description="Create multiple encoder groups at once"
-                                startContent={<Icon icon="lucide:layers" className="text-secondary" />}
-                                onPress={() => handleBulkInitialize(template)}
-                              >
-                                Bulk Initialize
-                              </DropdownItem>
-                            ) : null}
-                            
-                            <DropdownItem
-                              key="edit"
-                              description="Edit this template"
-                              startContent={<Icon icon="lucide:edit" className="text-warning" />}
-                              onPress={() => handleTemplateAction(null, 'edit', template)}
-                            >
-                              Edit Template
-                            </DropdownItem>
-                            
-                            <DropdownItem
-                              key="delete"
-                              description="Delete this template"
-                              color="danger"
-                              startContent={<Icon icon="lucide:trash-2" className="text-danger" />}
-                              onPress={() => setDeletePopoverOpen(template.id)}
-                            >
-                              Delete Template
-                            </DropdownItem>
-                          </DropdownMenu>
-                        </Dropdown>
-                        
-                        {/* Delete confirmation popover */}
-                        <Popover 
-                          isOpen={deletePopoverOpen === template.id} 
-                          onOpenChange={(open) => {
-                            if (!open) {
-                              setDeletePopoverOpen(null);
-                            }
-                          }}
-                          backdrop="opaque"
-                          placement="bottom-end"
-                          offset={8}
-                          crossOffset={0}
-                          shouldBlockScroll={false}
-                        >
-                          <PopoverTrigger>
-                            <div 
-                              className="absolute inset-0 pointer-events-none"
-                              style={{ 
-                                visibility: deletePopoverOpen === template.id ? 'visible' : 'hidden' 
-                              }}
-                            />
-                          </PopoverTrigger>
-                          <PopoverContent className="w-[280px]">
-                            <div className="px-3 py-3 w-full">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Icon icon="lucide:alert-triangle" className="text-danger text-lg" />
-                                <p className="text-small font-bold text-foreground">
-                                  Delete Template
-                                </p>
-                              </div>
-                              <div className="mb-4">
-                                <p className="text-small text-default-500">
-                                  Are you sure you want to delete <strong>"{template.name}"</strong>? This action cannot be undone.
-                                </p>
-                              </div>
-                              <div className="flex justify-end gap-2">
-                                <Button 
-                                  size="sm" 
-                                  variant="flat"
-                                  onPress={() => setDeletePopoverOpen(null)}
-                                >
-                                  Cancel
-                                </Button>                                
-                                <Button 
-                                  size="sm"
-                                  color="danger"
-                                  variant="solid"
-                                  onPress={() => {
-                                    handleConfirmDelete(template.id);
-                                    setDeletePopoverOpen(null);
-                                  }}
-                                >
-                                  Delete
-                                </Button>
-                              </div>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-                    </>
-                  )}
-                  {showExportSelection && isSelected && (
-                    <div className="bg-primary text-white rounded-full p-1">
-                      <Icon icon="lucide:check" className="text-lg" />
+                style={backgroundStyle.style}
+                onPress={() => {
+                  if (showExportSelection) {
+                    toggleTemplateSelection(template.id);
+                  } else {
+                    handleSelectTemplate(template);
+                  }
+                }}
+                onContextMenu={(e) => handleContextMenu(e, template)}
+              >
+                <div className="flex justify-between items-center mb-3">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`p-2 rounded-md ${iconBackgroundStyle.className}`}
+                      style={iconBackgroundStyle.style}
+                    >
+                      <Icon
+                        icon={getTemplateTypeIcon(template.type)}
+                        className={`text-xl ${iconColorStyle.className}`}
+                        style={iconColorStyle.style}
+                      />
                     </div>
+
+                    <Chip
+                      size="sm"
+                      variant="flat"
+                      color={chip.color}
+                      className={chip.className}
+                      style={chip.style}
+                    >
+                      {getTemplateTypeLabel(template.type)}
+                    </Chip>
+                  </div>
+
+                  <div className="flex gap-1">
+                    {!showExportSelection && (
+                      <>
+                        <div className="relative">
+                          <Dropdown>
+                            <DropdownTrigger>
+                              <Button
+                                isIconOnly
+                                size="sm"
+                                variant="light"
+                                color="default"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Icon icon="lucide:more-vertical" className="text-foreground-500" />
+                              </Button>
+                            </DropdownTrigger>
+                            <DropdownMenu aria-label="Template actions" variant="flat">
+                              <DropdownItem
+                                key="use"
+                                description="Apply this template to create a macro"
+                                startContent={<Icon icon="lucide:play" className="text-primary" />}
+                                onPress={() => handleSelectTemplate(template)}
+                              >
+                                Use Template
+                              </DropdownItem>
+
+                              {template.type.includes("encoder") ? (
+                                <DropdownItem
+                                  key="bulk-init"
+                                  description="Create multiple encoder groups at once"
+                                  startContent={<Icon icon="lucide:layers" className="text-secondary" />}
+                                  onPress={() => handleBulkInitialize(template)}
+                                >
+                                  Bulk Initialize
+                                </DropdownItem>
+                              ) : null}
+
+                              <DropdownItem
+                                key="edit"
+                                description="Edit this template"
+                                startContent={<Icon icon="lucide:edit" className="text-warning" />}
+                                onPress={() => handleTemplateAction(null, 'edit', template)}
+                              >
+                                Edit Template
+                              </DropdownItem>
+
+                              <DropdownItem
+                                key="delete"
+                                description="Delete this template"
+                                color="danger"
+                                startContent={<Icon icon="lucide:trash-2" className="text-danger" />}
+                                onPress={() => setDeletePopoverOpen(template.id)}
+                              >
+                                Delete Template
+                              </DropdownItem>
+                            </DropdownMenu>
+                          </Dropdown>
+
+                          {/* Delete confirmation popover */}
+                          <Popover
+                            isOpen={deletePopoverOpen === template.id}
+                            onOpenChange={(open) => {
+                              if (!open) {
+                                setDeletePopoverOpen(null);
+                              }
+                            }}
+                            backdrop="opaque"
+                            placement="bottom-end"
+                            offset={8}
+                            crossOffset={0}
+                            shouldBlockScroll={false}
+                          >
+                            <PopoverTrigger>
+                              <div
+                                className="absolute inset-0 pointer-events-none"
+                                style={{
+                                  visibility: deletePopoverOpen === template.id ? 'visible' : 'hidden'
+                                }}
+                              />
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[280px]">
+                              <div className="px-3 py-3 w-full">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Icon icon="lucide:alert-triangle" className="text-danger text-lg" />
+                                  <p className="text-small font-bold text-foreground">
+                                    Delete Template
+                                  </p>
+                                </div>
+                                <div className="mb-4">
+                                  <p className="text-small text-default-500">
+                                    Are you sure you want to delete <strong>"{template.name}"</strong>? This action cannot be undone.
+                                  </p>
+                                </div>
+                                <div className="flex justify-end gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="flat"
+                                    onPress={() => setDeletePopoverOpen(null)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    color="danger"
+                                    variant="solid"
+                                    onPress={() => {
+                                      handleConfirmDelete(template.id);
+                                      setDeletePopoverOpen(null);
+                                    }}
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </>
+                    )}
+                    {showExportSelection && isSelected && (
+                      <div className="bg-primary text-white rounded-full p-1">
+                        <Icon icon="lucide:check" className="text-lg" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <h3 className="text-lg font-medium mb-1">{template.name}</h3>
+
+                <div className="flex-grow overflow-hidden">
+                  {template.description ? (
+                    <p className="text-sm text-foreground-500 line-clamp-3">
+                      {template.description}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-foreground-400 italic">
+                      No description
+                    </p>
                   )}
                 </div>
-              </div>
-              
-              <h3 className="text-lg font-medium mb-1">{template.name}</h3>
-              
-              <div className="flex-grow overflow-hidden">
-                {template.description ? (
-                  <p className="text-sm text-foreground-500 line-clamp-3">
-                    {template.description}
-                  </p>
-                ) : (
-                  <p className="text-sm text-foreground-400 italic">
-                    No description
-                  </p>
-                )}
-              </div>
-            </Card>
+              </Card>
             </ElectricBorder>
 
           );
         })}
-        
+
         {/* iOS-style empty state with illustration effect */}
-       
+
       </div>
-      
+
       {/* Template Application Modal */}
-      <Modal 
-        isOpen={isOpen} 
+      <Modal
+        isOpen={isOpen}
         onOpenChange={onClose}
         size="3xl"
         shouldBlockScroll={true}
@@ -1163,8 +1213,8 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
       </Modal>
 
       {/* Bulk Encoder Initialization Modal */}
-      <Modal 
-        isOpen={isBulkOpen} 
+      <Modal
+        isOpen={isBulkOpen}
         onOpenChange={onBulkClose}
         size="5xl"
         scrollBehavior="inside"
@@ -1209,10 +1259,10 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
           )}
         </ModalContent>
       </Modal>
-      
+
       {/* Context Menu - Now using HeroUI Dropdown */}
-      <Dropdown 
-        isOpen={contextMenu.isOpen} 
+      <Dropdown
+        isOpen={contextMenu.isOpen}
         onOpenChange={(open) => {
           if (!open) {
             closeContextMenu();
@@ -1227,7 +1277,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
         }}
       >
         <DropdownTrigger>
-          <div 
+          <div
             className="fixed pointer-events-none bg-black"
             style={{
               left: contextMenu.x,
@@ -1237,7 +1287,7 @@ export const TemplatesGallery: React.FC<TemplatesGalleryProps> = ({
             }}
           />
         </DropdownTrigger>
-        <DropdownMenu 
+        <DropdownMenu
           aria-label="Context menu"
           variant="flat"
           className="min-w-[200px]"

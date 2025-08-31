@@ -125,7 +125,7 @@ export default function App() {
     setEditingTemplate(null);
   };
 
-  const handleDeleteTemplate = (id: string) => {
+  const handleDeleteTemplate = (_id: string) => {
     // Template deletion is handled in the TemplatesGallery component via the useTemplates hook
   };
   
@@ -136,17 +136,17 @@ export default function App() {
     setEditingTemplate(null);
   };
 
-  const handleBackToMacros = () => {
-    setCurrentView("macros");
-    setEditingMacro(null);
-    setTemplateSourceMacro(null);
-    setEditingTemplate(null);
-  };
+  // const handleBackToMacros = () => {
+  //   setCurrentView("macros");
+  //   setEditingMacro(null);
+  //   setTemplateSourceMacro(null);
+  //   setEditingTemplate(null);
+  // };
 
   // Function to determine if we should show back button
-  const shouldShowBackButton = () => {
-    return currentView === "create" || currentView === "template" || currentView === "edit-template";
-  };
+  // const shouldShowBackButton = () => {
+  //   return currentView === "create" || currentView === "template" || currentView === "edit-template";
+  // };
   
   const getBackButtonTarget = () => {
     if (currentView === "create") {
@@ -277,6 +277,45 @@ export default function App() {
         return null;
     }
   };
+
+  // Handle navigation requests from other components (e.g., MIDI monitor)
+  React.useEffect(() => {
+    const handler = () => {
+      const targetView = localStorage.getItem('navigateToView');
+      if (targetView === 'macros') {
+        // Ensure category is expanded before rendering list
+        const expandCategoryId = localStorage.getItem('expandCategoryId');
+        if (expandCategoryId) {
+          try {
+            const categories = JSON.parse(localStorage.getItem('macroCategories') || '[]');
+            const updated = categories.map((c: any) => ({ ...c, isExpanded: c.id === expandCategoryId ? true : c.isExpanded }));
+            localStorage.setItem('macroCategories', JSON.stringify(updated));
+          } catch {}
+        }
+        setCurrentView('macros');
+        // Retry loop to wait for content to mount
+        const macroId = localStorage.getItem('scrollToMacroId');
+        let tries = 0;
+        const maxTries = 12; // ~2.4s at 200ms
+        const tick = () => {
+          tries++;
+          const selector = macroId ? `[data-macro-id="${macroId}"]` : '';
+          const el = selector ? document.querySelector(selector) as HTMLElement | null : null;
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('macro-highlight');
+            setTimeout(() => el.classList.remove('macro-highlight'), 1400);
+            // Do not clear hints for potential future navigations; MacrosList handler clears scroll id
+          } else if (tries < maxTries) {
+            setTimeout(tick, 200);
+          }
+        };
+        setTimeout(tick, 150);
+      }
+    };
+    window.addEventListener('navigate-to-macros' as any, handler);
+    return () => window.removeEventListener('navigate-to-macros' as any, handler);
+  }, []);
 
   const renderHeader = () => {
     const titles: Record<string, string> = {

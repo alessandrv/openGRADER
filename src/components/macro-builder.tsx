@@ -27,7 +27,7 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
   const [clickActions, setClickActions] = useState<Action[]>([]);
   const [isEditing, setIsEditing] = useState<{section: string, index: number} | null>(null);
   const [macroType, setMacroType] = useState<"standard" | "encoder" | "encoder-click">("standard");
-  const [sharedTimeout, setSharedTimeout] = useState<number>(1000);
+  const [sharedTimeout, setSharedTimeout] = useState<number>(settings.defaultTimeout);
   const [categories, setCategories] = useState<MacroCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const { isOpen, onOpen, onOpenChange } = useDisclosure();
@@ -202,7 +202,7 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
       }
     } else {
       setMacroName(""); setActions([]); setBeforeActions([]); setAfterActions([]);
-      setSharedTimeout(1000); setMidiTrigger(null); setMacroType("standard");
+      setSharedTimeout(settings.defaultTimeout); setMidiTrigger(null); setMacroType("standard");
       setDecrementTrigger(null); setDecrementActions([]);
       setClickTrigger(null); setClickActions([]);
       setIsEditing(null);
@@ -533,7 +533,7 @@ export const MacroBuilder: React.FC<MacroBuilderProps> = ({ macroToEdit, onEditC
     setActions([]);
     setBeforeActions([]);
     setAfterActions([]);
-    setSharedTimeout(1000);
+    setSharedTimeout(settings.defaultTimeout);
     setMidiTrigger(null);
     setMacroType("standard");
     setDecrementTrigger(null);

@@ -1,5 +1,5 @@
 import React from "react";
-import { Card, Divider, Chip, Button, Input } from "@heroui/react";
+import { Card, Divider, Chip, Button } from "@heroui/react";
 import { Icon } from "@iconify/react";
 import { MacroDefinition } from "../types/macro";
 
@@ -50,7 +50,15 @@ export const EncoderMacroGroup: React.FC<EncoderMacroGroupProps> = ({ macros, on
       case "keyhold":
         return `Hold ${action.params.key} for ${action.params.duration}ms`;
       case "mouseclick":
-        return `${action.params.button} click at (${action.params.x}, ${action.params.y})`;
+        if (action.params.button === "scroll-up") {
+          return `Scroll up (amount: ${action.params.amount || 3})`;
+        } else if (action.params.button === "scroll-down") {
+          return `Scroll down (amount: ${action.params.amount || 3})`;
+        } else {
+          const btn = (action.params.button || "left");
+          const label = btn.charAt(0).toUpperCase() + btn.slice(1);
+          return `${label} Click${action.params.hold ? ' (hold)' : ''}`;
+        }
       case "mousemove":
         if (action.params.relative) {
           return `Move ${action.params.direction || 'right'} by ${action.params.distance || 100}px in ${action.params.duration}ms`;
@@ -167,7 +175,7 @@ export const EncoderMacroGroup: React.FC<EncoderMacroGroupProps> = ({ macros, on
                     variant="flat" 
                     color="success"
                     fullWidth
-                    onPress={() => setSelectedMacro(incrementMacro?.id === selectedMacro ? null : incrementMacro?.id)}
+                    onPress={() => setSelectedMacro(incrementMacro?.id === selectedMacro ? null : (incrementMacro?.id || null))}
                     isDisabled={!incrementMacro}
                   >
                     {selectedMacro === incrementMacro?.id ? "Hide Details" : "Show Details"}
@@ -233,7 +241,7 @@ export const EncoderMacroGroup: React.FC<EncoderMacroGroupProps> = ({ macros, on
                     variant="flat" 
                     color="warning"
                     fullWidth
-                    onPress={() => setSelectedMacro(decrementMacro?.id === selectedMacro ? null : decrementMacro?.id)}
+                    onPress={() => setSelectedMacro(decrementMacro?.id === selectedMacro ? null : (decrementMacro?.id || null))}
                     isDisabled={!decrementMacro}
                   >
                     {selectedMacro === decrementMacro?.id ? "Hide Details" : "Show Details"}
@@ -303,70 +311,7 @@ export const EncoderMacroGroup: React.FC<EncoderMacroGroupProps> = ({ macros, on
               )}
             </div>
             
-            {/* Shared actions section */}
-            <div className="mt-4">
-              <Accordion>
-                <AccordionItem
-                  key="shared"
-                  title={
-                    <div className="flex items-center gap-2">
-                      <Icon icon="lucide:share-2" className="text-foreground-500" />
-                      <span>Shared Actions</span>
-                    </div>
-                  }
-                >
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
-                    {/* Before Actions */}
-                    <Card className="p-3 bg-content2">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Icon icon="lucide:chevrons-left" className="text-primary" />
-                        <h5 className="font-medium">Before Actions</h5>
-                      </div>
-                      {incrementMacro?.beforeActions && incrementMacro.beforeActions.length > 0 ? (
-                        <div className="space-y-2">
-                          {incrementMacro.beforeActions.map((action, index) => (
-                            <div key={action.id} className="text-xs bg-content1 p-2 rounded-medium">
-                              <span className="text-foreground-500 mr-1">{index + 1}.</span>
-                              <span className="font-medium capitalize">{action.type}:</span>{" "}
-                              <span>{getActionSummary(action)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-foreground-500">No before actions</p>
-                      )}
-                    </Card>
-                    
-                    {/* After Actions */}
-                    <Card className="p-3 bg-content2">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Icon icon="lucide:chevrons-right" className="text-primary" />
-                        <h5 className="font-medium">After Actions</h5>
-                      </div>
-                      {incrementMacro?.afterActions && incrementMacro.afterActions.length > 0 ? (
-                        <div className="space-y-2">
-                          {incrementMacro.afterActions.map((action, index) => (
-                            <div key={action.id} className="text-xs bg-content1 p-2 rounded-medium">
-                              <span className="text-foreground-500 mr-1">{index + 1}.</span>
-                              <span className="font-medium capitalize">{action.type}:</span>{" "}
-                              <span>{getActionSummary(action)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-foreground-500">No after actions</p>
-                      )}
-                    </Card>
-                  </div>
-                  
-                  <div className="mt-2">
-                    <p className="text-xs text-foreground-500">
-                      Timeout: {incrementMacro?.timeout || 1000}ms
-                    </p>
-                  </div>
-                </AccordionItem>
-              </Accordion>
-            </div>
+            {/* Shared actions section removed to simplify component */}
           </Card>
         );
       })}

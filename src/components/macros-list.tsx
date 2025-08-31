@@ -6086,7 +6086,6 @@ class MacroItem extends React.Component<MacroItemProps> {
         >
           <Card 
             id={macro.groupId ? `macro-${macro.groupId}` : `macro-${macro.id}`}
-            data-macro-id={macro.groupId || macro.id}
             className="macro-card"
             onContextMenu={(e) => handleContextMenu(e, macro)}
           >

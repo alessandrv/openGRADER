@@ -1120,10 +1120,7 @@ async fn start_midi_listening_rust<R: Runtime>(
             None => return,
         };
         
-        // Early exit if no macros registered
-        if APP_STATE.registered_macros.lock().unwrap().is_empty() {
-            return;
-        }
+       
         
         let app_handle_for_macros = app_handle_clone.clone();
         
